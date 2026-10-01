@@ -239,10 +239,10 @@ const DEFAULT={titulo:"Minhas Finanças",meses:SEED,tipos:{...FIXO_DEFAULT},
   simg:{texto:"",itens:[],extras:[],guardado:{total:0,meses:0},base:null,salBase:null,baseOver:{},retirada:0,reserva:0,sobraMin:0,cenarios:[],horizonte:12,simView:"reforco"},
   futuros:[],pagos:PAGOS_SEED,alertEmail:"",movs:{},catsUser:[],catsUserCores:{},catConta:{},catContaCores:{},vencDia:{},detalhavel:{},metasCurto:[],aloc:{montante:0,itens:{}},aportes:[],parcelas:{},provMetodo:{},prevSel:["__total__"],metasCat:{},visSel:"todos",sobraAlvo:0,
   folha:{bruto:0,creche:0,pgbl:0,va:0,seguro:0,vaCred:0,dep:0,inssManual:null,irrfManual:null,outros:[]},
-  folhaCfg:{inssTetoSal:8475.55,inssTeto:988.07,depDed:189.59,
+  folhaCfg:{inssTetoSal:8475.55,inssTeto:988.07,depDed:189.59,inssFaixas:[[1621.00,7.5],[2902.84,9],[4354.27,12],[8475.55,14]],
     irrf:[[2428.80,0,0],[2826.65,7.5,182.16],[3751.05,15,394.16],[4664.68,22.5,675.49],[999999999,27.5,908.73]],
     redutor:{ativo:true,limIsencao:5000,limRedutor:7350,a:978.62,b:0.133145}},
-  ferias:[]}; // cada item: {id,nome,inicio,diasGozo,venderDias,adiantar13,override,envelope,viagem{...}} — aba Férias
+  ferias:[],_pagosInit:1,_pagoRealFix:1}; // cada item: {id,nome,inicio,diasGozo,venderDias,adiantar13,override,envelope,viagem{...}} — aba Férias
 
 // ---- Migração: única função, usada tanto no load() quanto no importar() ----
 // Garante que um estado vindo de qualquer versão anterior (ou de um backup antigo)
@@ -286,23 +286,19 @@ function migrarEstado(oIn){
   if(!o.aloc.itens)o.aloc.itens={};
   if(!Array.isArray(o.aportes))o.aportes=[];
   o.meses.forEach(mm=>{if(!mm.orcado)mm.orcado={};});
-  if(!o._pagosInit){
-    o.meses.forEach(m=>{
-      if(m.ym>="2026-01"&&m.ym<="2026-07"&&(!o.pagos[m.ym]||!Object.keys(o.pagos[m.ym]).length)){
-        o.pagos[m.ym]={};
-        Object.entries(m.contas).forEach(([n,v])=>{if(+v>0)o.pagos[m.ym][n]=true;});
-      }});
-    o._pagosInit=1;
-  }
+  o._pagosInit=1; // (a migração antiga que marcava jan–jul/2026 como pagas foi removida: valia só para a planilha original)
   if(!o.tipos)o.tipos={...FIXO_DEFAULT};
   if(!o.folha)o.folha=JSON.parse(JSON.stringify(DEFAULT.folha));
   if(!Array.isArray(o.folha.outros))o.folha.outros=[];
   if(!o.folhaCfg)o.folhaCfg=JSON.parse(JSON.stringify(DEFAULT.folhaCfg));
+  if(!Array.isArray(o.folhaCfg.inssFaixas))o.folhaCfg.inssFaixas=JSON.parse(JSON.stringify(DEFAULT.folhaCfg.inssFaixas));
   if(!o.folhaCfg.redutor)o.folhaCfg.redutor=JSON.parse(JSON.stringify(DEFAULT.folhaCfg.redutor));
   if(!o._pgblFix){o._pgblFix=1;}
   if(!o._vaFix){o._vaFix=1;}
   if(!o._act26){o._act26=1;}
   if(!o.coresCat)o.coresCat={};if(!o.catsAprendidas)o.catsAprendidas={};if(!Array.isArray(o.catsOcultas))o.catsOcultas=[];
+  if(!o._pagoRealFix){o.meses.forEach(m=>{Object.entries(m.pagoReal||{}).forEach(([n,v])=>{if(+v>0&&o.pagos&&o.pagos[m.ym]&&o.pagos[m.ym][n]&&+m.contas[n]!==+v){
+      if(!m.orcado)m.orcado={};if(!(n in m.orcado))m.orcado[n]=+m.contas[n];m.contas[n]=+v;}});});o._pagoRealFix=1;}
   if(!Array.isArray(o.ferias))o.ferias=[];
   o.ferias.forEach(fr=>{const v=fr.viagem||(fr.viagem={planos:[],gastos:[]});
     (v.planos||[]).forEach(pl=>{if(pl.destino==null)pl.destino=v.destino||"";if(pl.ida==null&&v.ida)pl.ida=v.ida;if(pl.volta==null&&v.volta)pl.volta=v.volta;});
@@ -370,11 +366,17 @@ function save(){
   state._atualizadoEm=Date.now();
   document.getElementById("savestate").textContent="Salvando…";
   saveT=setTimeout(()=>{
+    saveT=null;
     try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
     catch(e){document.getElementById("savestate").textContent="Não foi possível salvar";}
     marcarPendente();
   },400);
 }
+// se o app for fechado/escondido nesses 400 ms, grava na hora (no iPhone o app pode ser encerrado logo)
+function salvarJa(){if(!saveT)return;clearTimeout(saveT);saveT=null;
+  try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();}catch(e){}marcarPendente();if(typeof sincronizar==="function")sincronizar();}
+if(typeof window!=="undefined"&&window.addEventListener){window.addEventListener("pagehide",salvarJa);
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")salvarJa();});}
 // grava no aparelho sem marcar como alteração do usuário (usado ao receber dados da sincronização)
 function salvarLocal(){try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();}catch(e){}}
 
@@ -382,6 +384,9 @@ function salvarLocal(){try{localStorage.setItem(KEY,JSON.stringify(state));backu
 // deles "voltaria" do outro. Guarda {chave: quando}. Registros de lista usam o id (ou ym, nos
 // meses); chaves de objeto usam o caminho ("/meses/2026-10/contas/Luz"). ----
 function marcarApagado(k){if(!state._apagados)state._apagados={};state._apagados[k]=Date.now();}
+// recriar algo que já foi apagado (mesmo mês, mesma conta, mesmo parcelamento): o marcador vira
+// negativo = "revivido em"; na junção vale o marcador mais recente (exclusão ou revivência)
+function marcarRevivido(k){if(state._apagados&&state._apagados[k]>0)state._apagados[k]=-Date.now();}
 
 // ---- Juntar dois estados (sincronização e "Importar e juntar") ----
 // Junção em TRÊS vias quando há "base" (como os dados estavam na última sincronização deste
@@ -400,7 +405,8 @@ function iguais(x,y){
 function mesclarEstados(a,b,base){
   const aVence=(+a._atualizadoEm||0)>=(+b._atualizadoEm||0);
   const tomb={...(b._apagados||{}),...(a._apagados||{})};
-  Object.keys(b._apagados||{}).forEach(k=>{tomb[k]=Math.max(tomb[k]||0,b._apagados[k]);});
+  Object.keys(b._apagados||{}).forEach(k=>{const x=tomb[k]||0,y=b._apagados[k];tomb[k]=Math.abs(y)>Math.abs(x)?y:x;});
+  const apagado=k=>(tomb[k]||0)>0;
   const NADA={}; // marcador de "não existe"
   const obj=x=>x&&typeof x==="object"&&!Array.isArray(x);
   const chave=x=>obj(x)?(x.id!=null?x.id:(x.ym!=null?x.ym:null)):null;
@@ -413,7 +419,7 @@ function mesclarEstados(a,b,base){
       if(todos.length&&todos.every(e=>chave(e)!=null)){
         const mz=new Map(zArr.filter(e=>chave(e)!=null).map(e=>[String(chave(e)),e]));
         const ordem=[],mapa=new Map();
-        const add=(e,lado)=>{const k=String(chave(e));if(tomb[k])return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
+        const add=(e,lado)=>{const k=String(chave(e));if(apagado(k))return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
         (aVence?x:y).forEach(e=>add(e,aVence?"x":"y"));(aVence?y:x).forEach(e=>add(e,aVence?"y":"x"));
         const out=[];
         ordem.forEach(k=>{const v=mapa.get(k),zb=mz.has(k)?mz.get(k):NADA;
@@ -428,7 +434,7 @@ function mesclarEstados(a,b,base){
     if(obj(x)&&obj(y)){
       const zo=obj(z)?z:null,o={};
       new Set([...Object.keys(x),...Object.keys(y)]).forEach(k=>{
-        const p=path+"/"+k;if(tomb[p]||k==="_apagados")return;
+        const p=path+"/"+k;if(apagado(p)||k==="_apagados")return;
         const zk=zo&&(k in zo)?zo[k]:NADA;
         if(k in x&&k in y){o[k]=m(x[k],y[k],zk,p);return;}
         const v=k in x?x[k]:y[k];
@@ -441,7 +447,7 @@ function mesclarEstados(a,b,base){
   }
   const r=m(a,b,base?base:NADA,"");
   const limite=Date.now()-180*86400000; // esquece exclusões com mais de 6 meses
-  r._apagados={};Object.entries(tomb).forEach(([k,t])=>{if(t>limite)r._apagados[k]=t;});
+  r._apagados={};Object.entries(tomb).forEach(([k,t])=>{if(Math.abs(t)>limite)r._apagados[k]=t;});
   r._atualizadoEm=Math.max(+a._atualizadoEm||0,+b._atualizadoEm||0);
   return r;
 }
@@ -513,7 +519,8 @@ function renomear(){const t=prompt("Nome do painel:",state.titulo);if(t){state.t
 const porCat=m=>{const o={};for(const[k,v]of Object.entries(m.contas)){
   const val=+v||0;if(!val)continue;
   if(ehDetalhavel(k)&&itensFatura(m,k).length){
-    itensFatura(m,k).forEach(it=>{const c=it.cat||catOf(k);o[c]=(o[c]||0)+(+it.valor||0);});
+    const soma=somaItens(m,k),f=soma>val?val/soma:1; // itens passando do total da fatura: proporcional
+    itensFatura(m,k).forEach(it=>{const c=it.cat||catOf(k);o[c]=(o[c]||0)+(+it.valor||0)*f;});
     const resto=restoFatura(m,k);if(resto>0){const c=catOf(k);o[c]=(o[c]||0)+resto;}
   }else{const c=catOf(k);o[c]=(o[c]||0)+val;}
 }return o;};
@@ -531,15 +538,27 @@ function holt(ys,a=0.5,b=0.3){
   return l+t;
 }
 const fixosDoMes=m=>Object.entries(m.contas).filter(([n])=>tipoOf(n)==="Fixo").reduce((s,[,v])=>s+(+v||0),0);
+// Score de saúde (0–100), sempre sobre o mês e com as MESMAS definições do resto do app:
+//  40 · sobra ÷ renda (cheio a partir de 20%)   30 · fixos ÷ renda (cheio até 50%, zero a partir de 80%)
+//  20 · dívidas ÷ renda (cheio até 15%, zero a partir de 40%) — dívida = conta na categoria
+//       "Dívidas e cartões" OU com parcelamento configurado (financiamento, empréstimo...)
+//  10 · consistência: meses com sobra positiva entre os 3 últimos
+// renda aqui = renda + recebimentos avulsos (a mesma base da sobra única).
+function ehDivida(n){return catOf(n)==="Dívidas e cartões"||!!(state.parcelas&&state.parcelas[n]);}
 function scoreMes(idx){
-  const ms=mesesA();const m=ms[idx];if(!m)return null;const r=renda(m);
-  if(r<=0)return null;
-  const p1=clamp((sobra(m)/r)/0.20,0,1)*40;
-  const p2=clamp((0.80-fixosDoMes(m)/r)/0.30,0,1)*30;
-  const p3=clamp((0.40-(porCat(m)["Dívidas e cartões"]||0)/r)/0.25,0,1)*20;
+  const ms=mesesA();const m=ms[idx];if(!m)return null;
+  const r=r2(renda(m)+avulsosDoMes(m.ym).renda);if(r<=0)return null;
+  const sb=sobra(m),fix=fixosDoMes(m);
+  const contasDiv=Object.entries(m.contas).filter(([n,v])=>+v>0&&ehDivida(n));
+  const div=r2(contasDiv.reduce((s,[,v])=>s+(+v||0),0));
+  const p1=clamp((sb/r)/0.20,0,1)*40;
+  const p2=clamp((0.80-fix/r)/0.30,0,1)*30;
+  const p3=clamp((0.40-div/r)/0.25,0,1)*20;
   const w=ms.slice(Math.max(idx-2,0),idx+1);
-  const p4=(w.filter(x=>sobra(x)>0).length/w.length)*10;
-  return{total:Math.round(p1+p2+p3+p4),p1:Math.round(p1),p2:Math.round(p2),p3:Math.round(p3),p4:Math.round(p4)};
+  const pos=w.filter(x=>sobra(x)>0).length;
+  const p4=(pos/w.length)*10;
+  return{total:Math.round(p1+p2+p3+p4),p1:Math.round(p1),p2:Math.round(p2),p3:Math.round(p3),p4:Math.round(p4),
+    det:{ym:m.ym,renda:r,sobra:sb,fixos:r2(fix),dividas:div,contasDiv:contasDiv.map(([n,v])=>[n,+v]),pos,janela:w.map(x=>[x.ym,sobra(x)])}};
 }
 function sazonalidade(){
   const ms=mesesA();
@@ -767,7 +786,7 @@ function vVisao(){
   const scCor=sc?(sc.total>=75?"teal":sc.total>=50?"amber":"rose"):"";
   const cats=[...new Set([...Object.keys(CATCOLORS),...Object.keys(state.metasCat)])].filter(c=>porCat(M)[c]||state.metasCat[c]);
   const compBar=(lb,v,max)=>`<div style="flex:1;min-width:110px"><div style="font-size:11px;color:var(--mut)">${lb} <b>${v}/${max}</b></div><div class="bar"><div style="width:${v/max*100}%;background:${v/max>=.7?"#0d9488":v/max>=.4?"#d97706":"#e11d48"}"></div></div></div>`;
-  const rendaPrev=Math.max(holt(ms.map(renda)),0);
+  const rendaPrev=Math.max(mediana(ms.slice(-3).map(m=>+m.salario||0)),0); // salário típico; extras pontuais não entram
   const fixPrev=Math.max(holt(ms.map(fixosDoMes)),0);
   const varPrev=Math.max(holt(ms.map(m=>totalContas(m)-fixosDoMes(m))),0);
   const alvoS=+state.sobraAlvo||0;
@@ -804,7 +823,7 @@ function vVisao(){
 
   <div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3>⚖️ Balança do próximo mês — curtir × sobrar</h3>
     <label style="font-size:12px;color:var(--mut)">Quero que sobre <input type="number" value="${alvoS}" style="width:90px" onchange="state.sobraAlvo=+this.value;save();render()"></label></div>
-    <table style="max-width:560px"><tr><td>Renda prevista (suavização exp.)</td><td class="n">${fmt0(rendaPrev)}</td></tr>
+    <table style="max-width:560px"><tr><td>Salário previsto (mediana dos últimos 3 meses)</td><td class="n">${fmt0(rendaPrev)}</td></tr>
     <tr><td>− Contas fixas previstas</td><td class="n">− ${fmt0(fixPrev)}</td></tr>
     <tr><td>− Sobra desejada</td><td class="n">− ${fmt0(alvoS)}</td></tr>
     ${agNovo>0?`<tr><td>− Agenda: novidades de ${lbl(nextYm)} <span class="note">(${novos.map(f=>f.nome).join(", ")})</span></td><td class="n up">− ${fmt0(agNovo)}</td></tr>`:""}
@@ -827,7 +846,16 @@ function vVisao(){
       <div class="row" style="flex:1;gap:12px">
         ${compBar("Sobra ÷ renda",sc.p1,40)}${compBar("Peso dos fixos",sc.p2,30)}${compBar("Dívidas ÷ renda",sc.p3,20)}${compBar("Consistência",sc.p4,10)}
       </div></div>
-    <p class="note">Sobra vale cheio a partir de 20% da renda · fixos penalizam acima de 50% · dívidas acima de 15% · consistência = sobra positiva nos últimos 3 meses.</p></div>`:""}
+    <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13px;font-weight:600">Como este número foi calculado</summary>
+      ${(()=>{const d=sc.det,pc=(x)=>d.renda>0?Math.round(x/d.renda*100)+"%":"—";
+        return `<table style="font-size:12px;margin-top:6px;max-width:560px">
+        <tr><td>Renda do mês (salário + extra + recebimentos avulsos)</td><td class="n">${fmt(d.renda)}</td><td></td></tr>
+        <tr><td>Sobra (renda − contas − gastos avulsos)</td><td class="n">${fmt(d.sobra)}</td><td class="n">${pc(d.sobra)} → ${sc.p1}/40</td></tr>
+        <tr><td>Contas fixas</td><td class="n">${fmt(d.fixos)}</td><td class="n">${pc(d.fixos)} → ${sc.p2}/30</td></tr>
+        <tr><td>Dívidas${d.contasDiv.length?": "+d.contasDiv.map(([n])=>esc(n)).join(", "):" (nenhuma conta)"}</td><td class="n">${fmt(d.dividas)}</td><td class="n">${pc(d.dividas)} → ${sc.p3}/20</td></tr>
+        <tr><td>Meses com sobra positiva: ${d.janela.map(([y,v])=>lbl(y)+" "+(v>0?"✔":"✖")).join(" · ")}</td><td></td><td class="n">${d.pos}/${d.janela.length} → ${sc.p4}/10</td></tr></table>
+        <p class="note">Sobra vale cheio a partir de 20% da renda · fixos penalizam acima de 50% (zeram em 80%) · dívidas acima de 15% (zeram em 40%). Conta como dívida o que está na categoria "Dívidas e cartões" ou tem parcelamento configurado — ajuste na aba Categorias ou no ⏳ de Editar dados. Meses em rascunho não entram.</p>`;})()}
+    </details></div>`:""}
 
   <div class="card"><h3>Metas por categoria — ${lbl(M.ym)}</h3>
     ${cats.map(c=>{const g=porCat(M)[c]||0;const mt=+state.metasCat[c]||0;const p=mt>0?g/mt:0;
@@ -868,15 +896,19 @@ function caixaReal(ym){
   const gasto=r2(movs.filter(x=>x.tipo!=="renda").reduce((s,x)=>s+(+x.valor||0),0));
   const extra=r2(movs.filter(x=>x.tipo==="renda").reduce((s,x)=>s+(+x.valor||0),0));
   const contasTot=r2(totalContas(m));
-  const aPagar=r2(contasTot-pago); // contas ainda não pagas
+  const P=state.pagos[ym]||{};
+  const aPagar=r2(Object.entries(m.contas).reduce((s,[n,v])=>s+((+v>0&&!P[n])?+v:0),0)); // contas ainda não pagas
+  const inicial=r2(+((state.saldoInicial||{})[ym])||0); // o que já havia na conta no começo do mês (opcional)
+  const saldoAgora=r2(inicial+r+extra-pago-gasto);
   return{
-    renda:r, pago, gasto, extra,
-    saldoAgora:r2(r+extra-pago-gasto),      // o que tem em conta considerando só o já pago
+    renda:r, pago, gasto, extra, inicial,
+    saldoAgora,                              // o que tem em conta considerando só o já pago
     aPagar,
-    saldoFim:r2(r+extra-contasTot-gasto),    // projeção fim do mês: todas as contas pagas
+    saldoFim:r2(saldoAgora-aPagar),          // projeção fim do mês: todas as contas pagas
     contasTot
   };
 }
+function setSaldoInicial(ym,v){if(!state.saldoInicial)state.saldoInicial={};if(v===""||v==null)delete state.saldoInicial[ym];else state.saldoInicial[ym]=+v;save();render();}
 function conciliar(ym){
   const el=document.getElementById("concSaldo");const banco=+((el&&el.value)||NaN);
   if(!isFinite(banco)){alert("Digite o saldo real que aparece no banco.");return;}
@@ -968,6 +1000,7 @@ function vSobras(){
   <div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3>💰 Quanto sobra na sua conta — ${lbl(sobSel)}</h3>
     ${tudoPago?'<span class="pill teal">todas as contas pagas</span>':`<span class="pill" style="background:#fef3c7;color:#92400e">${nContas-nPagas} conta(s) a pagar</span>`}</div>
     <table style="max-width:560px">
+      <tr><td>Saldo no começo do mês <span class="note" style="margin:0">(o que já estava na conta — opcional, para a conciliação bater)</span></td><td class="n"><input type="number" step="0.01" value="${C.inicial||""}" placeholder="0,00" style="width:110px" onchange="setSaldoInicial('${sobSel}',this.value)"></td></tr>
       <tr><td>Renda do mês (salário + extra fixo)</td><td class="n teal">+ ${fmt(C.renda)}</td></tr>
       ${C.extra>0?`<tr><td>Rendas extras avulsas (recebidas)</td><td class="n teal">+ ${fmt(C.extra)}</td></tr>`:""}
       <tr><td>Contas já pagas (aba Status)</td><td class="n">− ${fmt(C.pago)}</td></tr>
@@ -1154,8 +1187,8 @@ function radar(){
     const ys=serieConta(c);const at=ys.filter(v=>v>0);
     if(at.length<2)continue;
     const med=mediana(at);const last=ys[n-1];
-    if(n>=4&&ys[n-1]>ys[n-2]&&ys[n-2]>ys[n-3]&&ys[n-3]>0)
-      out.push(["amber","▲ <b>"+c+"</b> subiu 3 meses seguidos ("+fmt0(ys[n-3])+" → "+fmt0(last)+")."]);
+    if(n>=4&&ys[n-1]>ys[n-2]&&ys[n-2]>ys[n-3]&&ys[n-3]>ys[n-4]&&ys[n-4]>0)
+      out.push(["amber","▲ <b>"+esc(c)+"</b> subiu 3 meses seguidos ("+fmt0(ys[n-4])+" → "+fmt0(last)+")."]);
     if(last>0&&med>0&&last>med*1.3)
       out.push(["rose","<b>"+esc(c)+"</b> fechou o último mês "+Math.round((last/med-1)*100)+"% acima da sua mediana ("+fmt0(med)+") — vale investigar."]);
     if(tipoOf(c)==="Fixo"&&at.length>=3){
@@ -1283,7 +1316,7 @@ function projCfg(cfg,N){
       const ativo=!it.dur||k<=it.dur;
       if(it.modo==="substituir"&&it.alvo){
         const tg=it.alvo==="__moradia__"?["Aluguel","Condomínio"]:[it.alvo];
-        tg.forEach(t=>{if(t in c)c[t]=0;});
+        if(ativo)tg.forEach(t=>{if(t in c)c[t]=0;});
         c["__n"+ix]=ativo?+it.valor||0:0;
       }else{c["__e"+ix]=ativo?+it.valor||0:0;}
     });
@@ -1342,8 +1375,11 @@ function agendarItemC(ci,ii){
   const inicio=prompt("Início (AAAA-MM):",nextYm);if(!inicio)return;
   const tipo=it.dur===1?"unico":"recorrente";
   const fim=it.dur>1?ymAdd(inicio,it.dur-1):(tipo==="unico"?inicio:null);
-  const nome=it.modo==="substituir"?(it.alvo==="__moradia__"?"Novo aluguel+cond.":"Novo "+it.alvo):it.nome;
-  state.futuros.push({id:uid(),nome,valor:it.valor,tipo,inicio,fim});
+  let nome=it.nome,valor=+it.valor||0;
+  if(it.modo==="substituir"){const dif=r2(itemImpacto(it,simBase()).imp);
+    if(dif<=0){alert("Essa troca reduz o gasto ("+fmt(dif)+"/mês). Para valer, ajuste o valor da conta em Editar dados quando ela mudar — a Agenda só agenda gastos novos.");return;}
+    nome="Aumento: "+(it.alvo==="__moradia__"?"aluguel+cond.":it.alvo);valor=dif;}
+  state.futuros.push({id:uid(),nome,valor,tipo,inicio,fim});
   save();alert("Agendado: "+nome+" a partir de "+lbl(inicio)+". Veja na aba Agenda.");render();
 }
 function kDoMes(B,mm){for(let k=1;k<=12;k++){if(+ymAdd(B.ym,k).slice(5)===mm)return k;}return 1;}
@@ -1504,7 +1540,7 @@ function vSim(){
   ${S.cenarios.length?`<div class="card"><h3>3 · Comparação — valores lado a lado (${N===12?"1 ano":N+" meses"})</h3>
     <table><tr><th>Métrica</th><th class="n">Base</th>${S.cenarios.map(c=>`<th class="n">${esc(c.nome.length>16?c.nome.slice(0,15)+"…":c.nome)}</th>`).join("")}</tr>
       <tr><td>Renda base/mês (salário)</td><td class="n">${fmt(B.sal)}</td>${cenD.map(()=>`<td class="n">${fmt(B.sal)}</td>`).join("")}</tr>
-      <tr><td>Reforços no período (13º/PLR/guardado)</td><td class="n">—</td>${cenD.map(D=>`<td class="n ${D.extrasTot>0?'teal':''}">${D.extrasTot>0?"+"+fmt(D.extrasTot):"—"}</td>`).join("")}</tr>
+      <tr><td>Reforços no período (13º/PLR/guardado)</td><td class="n">—</td>${cenD.map(D=>`<td class="n ${D.extrasTot>0?'teal':D.extrasTot<0?'rose':''}">${Math.abs(D.extrasTot)>0.005?(D.extrasTot>0?"+":"−")+fmt(Math.abs(D.extrasTot)):"—"}</td>`).join("")}</tr>
       <tr><td>Despesas estruturais/mês</td><td class="n">${fmt(B.contasAuto)}</td>${cenD.map(D=>`<td class="n">${fmt(D.despesa)}</td>`).join("")}</tr>
       <tr><td><b>Sobra só com salário/mês</b> <span class="note">(o gasto cabe no salário?)</span></td><td class="n">${fmt(B.sobraAuto)}</td>${cenD.map(D=>`<td class="n ${D.sobraEstr>=0?'down':'up'}"><b>${fmt(D.sobraEstr)}</b></td>`).join("")}</tr>
       <tr><td>Sobra média/mês</td><td class="n">${fmt(baseAcc/N)}</td>${cenD.map(D=>`<td class="n">${fmt(D.acc/N)}</td>`).join("")}</tr>
@@ -1564,7 +1600,7 @@ function vStatus(){
   else{
     if(maior)alerts.push(["amber","Maior pendência: <b>"+maior.n+"</b> ("+fmt(maior.v)+") — "+Math.round(maior.v/pend*100)+"% do que falta."]);
     if(pendFixas.length)alerts.push(["amber",pendFixas.length+" conta(s) <b>fixa(s)</b> pendente(s) ("+fmt(pendFixas.reduce((s,x)=>s+x.v,0))+") — priorize: fixas atrasadas geram multa/juros."]);
-    if(r>0)alerts.push([r-total>=0?"teal":"rose","Pagas todas as contas, a renda do mês ("+fmt(r)+") deixa <b>"+fmt(r-total)+"</b> de sobra."]);
+    if(r>0){const sb=sobra(m);alerts.push([sb>=0?"teal":"rose","Pagas todas as contas (e os gastos do dia a dia já lançados), sobram <b>"+fmt(sb)+"</b> no mês."]);}
   }
   if(medHist>0&&total>medHist*1.1)alerts.push(["amber","O total deste mês ("+fmt(total)+") está "+Math.round((total/medHist-1)*100)+"% acima da média dos últimos meses ("+fmt(medHist)+")."]);
   const nProv=contarProv(m);
@@ -1681,7 +1717,8 @@ function addFuturo(){
 function calcINSS(bruto){
   const C=state.folhaCfg;
   if(bruto>=C.inssTetoSal)return C.inssTeto;
-  const fx=[[1621.00,.075],[3054.00,.09],[4581.00,.12],[C.inssTetoSal,.14]];
+  // faixas progressivas (limite, alíquota %) — editáveis em Parâmetros; a última vai até o teto
+  const fx=(C.inssFaixas||DEFAULT.folhaCfg.inssFaixas).map(([l,a],i,arr)=>[i===arr.length-1?C.inssTetoSal:+l,+a/100]);
   let v=0,ant=0;
   for(const[lim,al]of fx){if(bruto>ant)v+=(Math.min(bruto,lim)-ant)*al;ant=lim;}
   return Math.min(v,C.inssTeto);
@@ -1782,6 +1819,10 @@ function vFolha(){
       <label>redução parcial até <input type="number" step="0.01" value="${C.redutor.limRedutor}" style="width:90px" onchange="state.folhaCfg.redutor.limRedutor=+this.value;save();render()"></label>
       <label>fórmula: <input type="number" step="0.01" value="${C.redutor.a}" style="width:80px" onchange="state.folhaCfg.redutor.a=+this.value;save();render()"> − <input type="number" step="0.000001" value="${C.redutor.b}" style="width:90px" onchange="state.folhaCfg.redutor.b=+this.value;save();render()"> × renda</label>
     </div>
+    <p class="note" style="margin-top:6px">Faixas INSS (até · alíquota %) — a última vai até o teto:</p>
+    ${(C.inssFaixas||[]).map((f,i)=>`<div class="row" style="margin:3px 0">
+      <input type="number" step="0.01" value="${f[0]}" style="width:110px" onchange="state.folhaCfg.inssFaixas[${i}][0]=+this.value;save();render()">
+      <input type="number" step="0.1" value="${f[1]}" style="width:70px" onchange="state.folhaCfg.inssFaixas[${i}][1]=+this.value;save();render()"></div>`).join("")}
     <p class="note" style="margin-top:6px">Faixas IRRF (limite da base · alíquota % · parcela a deduzir):</p>
     ${C.irrf.map((f,i)=>`<div class="row" style="margin:3px 0">
       <input type="number" step="0.01" value="${f[0]>=999999999?"":f[0]}" placeholder="∞" style="width:110px" onchange="state.folhaCfg.irrf[${i}][0]=+this.value||999999999;save();render()">
@@ -1898,7 +1939,9 @@ function puxarConta(idx,n){ // estima pela regra escolhida e marca como provisó
 function puxarTodasPendentes(idx){ // preenche só as contas ZERADAS (não toca no que já tem valor/pago)
   const m=state.meses[idx];if(!m.prov)m.prov={};
   const nomes=new Set();meses().filter(x=>x.ym<m.ym).forEach(x=>Object.keys(x.contas).forEach(k=>nomes.add(k)));
+  const recentes=new Set();meses().filter(x=>x.ym<m.ym).slice(-3).forEach(x=>Object.keys(x.contas).forEach(k=>{if(+x.contas[k]>0)recentes.add(k);}));
   let n=0;nomes.forEach(k=>{
+    const pi=parcelaInfo(k,m.ym);if(pi&&pi.quitada)return;if(!recentes.has(k))return; // só o que apareceu nos últimos 3 meses
     if(!(+m.contas[k]>0)){const v=estimaConta(k,m.ym);if(v>0){const vv=Math.round(v*100)/100;m.contas[k]=vv;m.prov[k]=true;if(!m.orcado)m.orcado={};m.orcado[k]=vv;n++;}}});
   save();render();
   alert(n?("Preenchidas "+n+" conta(s) vazia(s) pela regra de cada uma, marcadas como provisórias (em vermelho). Contas que já tinham valor NÃO foram alteradas."):"Nenhuma conta zerada para preencher.");
@@ -1946,6 +1989,7 @@ function parcelaInfo(n,ym){
   return{k,total,fim,inicio:cfg.inicio,valor:v,faltam,restante:faltam*v};
 }
 function setParcela(n,inicio,total,multa,moraDia,defasado,atrasoDesde,diasTipico,valorOrig){if(!state.parcelas)state.parcelas={};
+  if(inicio&&+total>0)marcarRevivido("/parcelas/"+n);
   if(inicio&&+total>0)state.parcelas[n]={inicio,total:+total,multa:+multa||0,moraDia:+moraDia||0,defasado:!!defasado,atrasoDesde:atrasoDesde||null,diasTipico:+diasTipico||0,valorOrig:+valorOrig||0};
   else{delete state.parcelas[n];marcarApagado("/parcelas/"+n);}save();render();}
 // valor ORIGINAL da parcela (do contrato); se não configurado, usa o valor lançado no mês
@@ -1954,7 +1998,7 @@ function valorParcOrig(n,ym){const cfg=parcelaCfg(n);return (cfg&&+cfg.valorOrig
 function pagoAcumulado(n,ym){const cfg=parcelaCfg(n);if(!cfg)return null;
   const pg=pagasAte(n,ym);const v=valorParcOrig(n,ym);
   if(pg<=0)return{pg:0,cnt:0,preCnt:0,preBase:0,preJuros:0,exatoReg:0,jurosReg:0,total:0};
-  const ji=jurosInfo(n,ym)||{pago:0,juros:0,cnt:0};
+  const ji=jurosInfo(n,ym,pg)||{pago:0,juros:0,cnt:0};
   const cnt=Math.min(ji.cnt,pg);
   const preCnt=Math.max(0,pg-cnt);
   const preBase=r2(preCnt*v);
@@ -2007,7 +2051,9 @@ function diasAtraso(n,ym,dataPag){const dv=dataVenc(n,ym);if(!dv)return 0;
 function valorComAtraso(n,ym,dias){const cfg=parcelaCfg(n)||{};const v=valorParcOrig(n,ym);
   return dias>0?v+(+cfg.multa||0)+dias*(+cfg.moraDia||0):v;}
 function setPagoReal(idx,n,v){const m=state.meses[idx];if(!m.pagoReal)m.pagoReal={};
-  if(v>0)m.pagoReal[n]=Math.round(v*100)/100;else delete m.pagoReal[n];save();render();}
+  if(v>0){if(!m.orcado)m.orcado={};if(!(n in m.orcado)&&+m.contas[n]>0)m.orcado[n]=+m.contas[n];
+    m.pagoReal[n]=Math.round(v*100)/100;m.contas[n]=m.pagoReal[n];if(m.prov)delete m.prov[n];}
+  else delete m.pagoReal[n];save();render();}
 // aplica o valor pago com juros TAMBÉM no valor efetivo do mês (Editar dados),
 // congelando a parcela original como orçado para o estouro aparecer no Orçado × Real
 function usarSimulado(idx,n,v){const m=state.meses[idx];const vv=Math.round(v*100)/100;
@@ -2021,10 +2067,10 @@ function usarSimulado(idx,n,v){const m=state.meses[idx];const vv=Math.round(v*10
   if(m.prov)delete m.prov[n];           // valor real confirmado, sai do provisório
   save();render();}
 // acumulado com × sem juros da parcela, do início até ymLim
-function jurosInfo(n,ymLim){const cfg=parcelaCfg(n);if(!cfg)return null;
+function jurosInfo(n,ymLim,maxCnt){const cfg=parcelaCfg(n);if(!cfg)return null;
   let orig=0,pago=0,cnt=0;
   meses().forEach(x=>{if(x.ym>=cfg.inicio&&x.ym<=ymLim){const v=+x.contas[n]||0;
-    if(v>0){const base=(+cfg.valorOrig>0)?+cfg.valorOrig:v; // compara contra a parcela ORIGINAL
+    if(v>0&&(maxCnt==null||cnt<maxCnt)){const base=(+cfg.valorOrig>0)?+cfg.valorOrig:v; // compara contra a parcela ORIGINAL
       orig+=base;pago+=(x.pagoReal&&+x.pagoReal[n]>0)?+x.pagoReal[n]:v;cnt++;}}});
   return{orig,pago,juros:pago-orig,cnt};}
 let simPagData={};
@@ -2199,24 +2245,25 @@ function criarMes(ym){
   if(ant)Object.entries(ant.contas).forEach(([k,v])=>{if(+v>0){contas[k]=+v;prov[k]=true;orcado[k]=+v;}});
   const sal=+state.folha.bruto>0?r2(folhaCalc().liq):(ant?ant.salario:0);
   const m={ym,salario:sal,extra:0,va:vaACT(ym)||(ant?ant.va:0),rascunho:true,contas,prov,orcado};
-  state.meses.push(m);aplicarAportesDoMes(ym);return m;
+  marcarRevivido(ym);state.meses.push(m);aplicarAportesDoMes(ym);return m;
 }
 function novoMes(copiar){
   const ms=meses();const last=ms[ms.length-1];
   if(!last){ // primeiro mês do painel: nasce zerado, mês corrente
     const hoje=new Date();const ym=hoje.getFullYear()+"-"+String(hoje.getMonth()+1).padStart(2,"0");
-    state.meses.push({ym,salario:0,extra:0,va:0,rascunho:true,contas:{},prov:{},orcado:{}});
+    marcarRevivido(ym);state.meses.push({ym,salario:0,extra:0,va:0,rascunho:true,contas:{},prov:{},orcado:{}});
     edSel=0;save();render();return;
   }
   const d=new Date(+last.ym.slice(0,4),+last.ym.slice(5),1);
   const ym=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
   if(state.meses.some(m=>m.ym===ym)){alert("O mês "+lbl(ym)+" já existe.");return;}
-  const contas=Object.fromEntries(Object.entries(last.contas).map(([k,v])=>[k,copiar?v:0]));
+  const quit=k=>{const pi=parcelaInfo(k,ym);return pi&&pi.quitada;};
+  const contas=Object.fromEntries(Object.entries(last.contas).filter(([k])=>!quit(k)).map(([k,v])=>[k,copiar?v:0]));
   (state.futuros||[]).forEach(f=>{if(f.nome in contas&&!ativoEm(f,ym))contas[f.nome]=0;});
   const ag=futurosEm(ym);ag.forEach(f=>{if(!(f.nome in contas)||!contas[f.nome])contas[f.nome]=f.valor;});
   const vaNovo=vaACT(ym)||last.va; 
   const prov={},orcado={};if(copiar)Object.keys(contas).forEach(k=>{if(+contas[k]>0){prov[k]=true;orcado[k]=+contas[k];}}); // valores copiados = provisórios e viram orçado
-  state.meses.push({ym,salario:last.salario,extra:copiar?last.extra:0,va:vaNovo,rascunho:true,contas,prov,orcado});
+  marcarRevivido(ym);state.meses.push({ym,salario:last.salario,extra:copiar?last.extra:0,va:vaNovo,rascunho:true,contas,prov,orcado});
   const aps=aplicarAportesDoMes(ym);
   edSel=meses().length-1;save();render();
   const avisos=[];
@@ -2309,7 +2356,7 @@ function delMes(i){if(confirm("Excluir "+lbl(state.meses[i].ym)+"?")){marcarApag
 function delConta(i,n){if(!confirm('Remover "'+n+'" de '+lbl(state.meses[i].ym)+"? (só deste mês; o histórico dos outros meses não é afetado)"))return;delete state.meses[i].contas[n];marcarApagado("/meses/"+state.meses[i].ym+"/contas/"+n);save();render();}
 function addConta(i){
   const n=document.getElementById("ncNome").value.trim();const v=+document.getElementById("ncVal").value||0;
-  if(!n)return;state.meses[i].contas[n]=v;save();render();
+  if(!n)return;state.meses[i].contas[n]=v;marcarRevivido("/meses/"+state.meses[i].ym+"/contas/"+n);save();render();
 }
 
 // ============ META ============
@@ -2492,6 +2539,7 @@ function aplicarAloc(){
     if(m){m.extra=Math.round(((+m.extra||0)+a.valor)*100)/100;a.aplicado=true;ap++;}
     else prog++;
   });
+  Object.keys(state.aloc.itens).forEach(k=>{if(!k.startsWith("meta:"))state.aloc.itens[k]=0;});state.aloc.montante=0;
   save();render();
   const partes=[];
   if(n)partes.push(n+" meta(s) receberam o valor");
@@ -2506,10 +2554,10 @@ function vMeta(){
   while(saldo<M.alvo&&n<1200){saldo=saldo*(1+i)+M.aporte;n++;[.25,.5,.75].forEach(p=>{if(!marcos[p]&&saldo>=M.alvo*p)marcos[p]=n;});}
   const inf=n>=1200;const anos=Math.floor(n/12),mm=n%12;
   const dt=k=>{const d=new Date();d.setMonth(d.getMonth()+k);return NM[d.getMonth()]+"/"+d.getFullYear();};
-  const prog=Math.min(M.atual/M.alvo*100,100);
+  const prog=M.alvo>0?Math.min(M.atual/M.alvo*100,100):0;
   return `
   <div class="card"><p class="eyebrow">Contagem regressiva</p>
-    <h1 style="margin:4px 0">${M.atual>=M.alvo?"Meta atingida 🎉":inf?"Inalcançável no ritmo atual":(anos?anos+" ano"+(anos>1?"s":""):"")+(anos&&mm?" e ":"")+(mm?mm+" m"+(mm>1?"eses":"ês"):anos?"":"menos de 1 mês")}</h1>
+    <h1 style="margin:4px 0">${!(M.alvo>0)?"Defina a meta abaixo":M.atual>=M.alvo?"Meta atingida 🎉":inf?"Inalcançável no ritmo atual":(anos?anos+" ano"+(anos>1?"s":""):"")+(anos&&mm?" e ":"")+(mm?mm+" m"+(mm>1?"eses":"ês"):anos?"":"menos de 1 mês")}</h1>
     ${!inf&&M.atual<M.alvo?`<p class="note">Chegada prevista: <b>${dt(n)}</b> · aporte de ${fmt0(M.aporte)}/mês a ${M.taxa}% a.a.</p>`:""}
     <div class="bar"><div style="width:${prog}%"></div></div>
     <p class="note">${fmt0(M.atual)} de ${fmt0(M.alvo)} (${prog.toFixed(1)}%)</p>
@@ -2546,7 +2594,7 @@ function vMeta(){
       if(pi&&!pi.quitada)linhas.push({k:"div:"+n,rot:"💳 Quitar "+n,extra:"simule o desconto na aba Dívidas"});});
     linhas.push({k:"outros",rot:"🧺 Outros (reserva de emergência, reforço na Simulação...)",extra:""});
     const somaDest=linhas.reduce((s,l)=>s+(+state.aloc.itens[l.k]||0),0);
-    const somaAportes=(state.aportes||[]).reduce((s,a)=>s+a.valor,0);
+    const somaAportes=(state.aportes||[]).filter(a=>!a.aplicado).reduce((s,a)=>s+a.valor,0);
     const soma=somaDest+somaAportes;
     const resto=(+state.aloc.montante||0)-soma;
     return `<table style="margin-top:6px"><tr><th>Destino</th><th class="n">Alocar R$</th></tr>
@@ -2583,7 +2631,7 @@ function vMeta(){
 function gastoPorCategoria(yms){
   const o={},add=(c,v)=>{if(!(+v))return;c=c||"Outros";o[c]=r2((o[c]||0)+(+v));};
   meses().filter(m=>yms.includes(m.ym)).forEach(m=>{const pc=porCat(m);Object.entries(pc).forEach(([c,v])=>add(c,v));});
-  yms.forEach(ym=>(state.movs[ym]||[]).filter(x=>x.tipo!=="renda").forEach(x=>add(x.cat,x.valor)));
+  yms.forEach(ym=>(state.movs[ym]||[]).filter(x=>x.tipo!=="renda"&&!x._ferias).forEach(x=>add(x.cat,x.valor)));
   (state.ferias||[]).forEach(f=>((f.viagem&&f.viagem.gastos)||[]).forEach(g=>{if(yms.includes((g.data||"").slice(0,7))&&+g.valor>0)add(g.cat,g.valor);}));
   return o;
 }
@@ -2704,9 +2752,11 @@ async function lerExtrato(inp){
     const r=/<OFX>|OFXHEADER/i.test(txt)?lerOFX(txt):lerCSV(txt);
     if(!r.linhas.length)throw new Error("Nenhum lançamento encontrado no arquivo.");
     const ids=idsExistentes();
+    const vistos={};
     extratoPrev={arquivo:arq.name,cartao:r.cartao,destino:"mes",contaFatura:"",linhas:r.linhas.map(x=>{
       const gasto=r.cartao?x.valor>0:x.valor<0,valor=Math.abs(r2(x.valor));
-      const id="ext_"+hashTxt([x.fitid||"",x.data,valor,x.desc].join("|"));
+      const base=[x.fitid||"",x.data,valor,x.desc].join("|"),oc=vistos[base]=(vistos[base]||0)+1;
+      const id="ext_"+hashTxt(base+(oc>1?"#"+oc:""));
       const conta=gasto?pareceConta(x.desc):null,dup=ids.has(id),transf=pareceTransferencia(x.desc);
       const motivo=dup?"já importado":conta?"parece a conta \u201c"+conta+"\u201d":transf?"transferência/pagamento de fatura":!gasto?"recebimento (o salário já está na renda)":"";
       return{id,data:x.data,desc:x.desc,valor,tipo:gasto?"gasto":"renda",cat:gasto?(classificaMov(x.desc)||"Outros"):"Renda extra",usar:!motivo,motivo,dup};})};
@@ -2760,22 +2810,23 @@ function vExtrato(){
 
 // ---- lembretes de vencimento (.ics para Google Agenda / Calendário do iPhone) ----
 function icsData(d){return d.replace(/-/g,"");}
-function icsTexto(t){return String(t).replace(/\\/g,"\\\\").replace(/;/g,"\;").replace(/,/g,"\\,").replace(/\n/g,"\\n");}
+function icsTexto(t){return String(t).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\n/g,"\\n");}
 function gerarICS(comValores){
   const hoje=hojeISO(),ultimo=meses()[meses().length-1],agora=new Date().toISOString().replace(/[-:]/g,"").slice(0,15)+"Z";
   const linhas=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Minhas Financas//Lembretes//PT-BR","CALSCALE:GREGORIAN","METHOD:PUBLISH","X-WR-CALNAME:Contas a pagar"];
   const contas=allContas().filter(n=>vencDe(n));
   contas.forEach(n=>{
     const dia=vencDe(n),ym=hoje.slice(0,7);
-    let ini=ym+"-"+String(Math.min(dia,28)).padStart(2,"0");if(ini<hoje)ini=ymAdd(ym,1)+"-"+String(Math.min(dia,28)).padStart(2,"0");
+    const diaEm=y=>y+"-"+String(Math.min(dia,new Date(+y.slice(0,4),+y.slice(5),0).getDate())).padStart(2,"0");
+    let ini=diaEm(ym);if(ini<hoje)ini=diaEm(ymAdd(ym,1));
     const fim=new Date(ini+"T00:00:00");fim.setDate(fim.getDate()+1);
     const p=parcelaInfo&&parcelaInfo(n,ym);
     const v=ultimo&&+ultimo.contas[n]?" — ~"+fmt(+ultimo.contas[n]):"";
     linhas.push("BEGIN:VEVENT","UID:conta-"+hashTxt(n)+"@minhas-financas","DTSTAMP:"+agora,
       "DTSTART;VALUE=DATE:"+icsData(ini),"DTEND;VALUE=DATE:"+icsData(isoData(fim)),
-      "RRULE:FREQ=MONTHLY;BYMONTHDAY="+(dia>28?"-1":dia)+(p&&p.fim&&!p.quitada?";UNTIL="+icsData(p.fim+"-28"):""),
+      "RRULE:FREQ=MONTHLY;"+(dia>28?"BYMONTHDAY="+Array.from({length:dia-27},(_,i)=>28+i).join(",")+";BYSETPOS=-1":"BYMONTHDAY="+dia)+(p&&p.fim&&!p.quitada?";UNTIL="+icsData(p.fim+"-28"):""),
       "SUMMARY:"+icsTexto("Pagar "+n+(comValores?v:"")),
-      "DESCRIPTION:"+icsTexto("Vencimento todo dia "+(dia>28?"último":dia)+(p&&!p.quitada&&!p.antes?" · parcela até "+lbl(p.fim):"")+". Marque como paga na aba Status do mês."),
+      "DESCRIPTION:"+icsTexto("Vencimento todo dia "+dia+(dia>28?" (ou o último dia, nos meses mais curtos)":"")+(p&&!p.quitada&&!p.antes?" · parcela até "+lbl(p.fim):"")+". Marque como paga na aba Status do mês."),
       "BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+icsTexto("Vence amanhã: "+n),"TRIGGER:-PT15H","END:VALARM","END:VEVENT");
   });
   linhas.push("END:VCALENDAR");
@@ -2868,7 +2919,8 @@ function salarioNormalFerias(f){
 function saldoSalarioFerias(f,civilRef){
   const F=state.folha,C=state.folhaCfg,c=calcFerias(f);
   const diasFer=diasFeriasNoMes(f,civilRef);
-  const diasTrab=Math.max(0,30-diasFer);
+  const diasNoMesCivil=new Date(+civilRef.slice(0,4),+civilRef.slice(5),0).getDate();
+  const diasTrab=diasFer>=diasNoMesCivil?0:Math.max(0,30-diasFer);
   const bruto=brutoFerias(f);
   const saldo=r2(bruto/30*diasTrab);
   const prop=c.diasGozados>0?diasFer/c.diasGozados:0;
@@ -2893,7 +2945,8 @@ function calc13(f){
   const brutoTotal=r2(brutoFerias(f)*avos/12);
   const pct1=clamp(tz.pctParc1!=null?+tz.pctParc1:50,0,100);
   const parc1Auto=r2(brutoTotal*pct1/100);
-  const parc1=ov.parc1!=null?+ov.parc1:parc1Auto;
+  const adiantou=!!f.adiantar13;
+  const parc1=adiantou?r2(calcFerias(f).adto13):(ov.parc1!=null?+ov.parc1:parc1Auto);
   const inssAuto=r2(calcINSS(brutoTotal));
   const inss=ov.inss!=null?+ov.inss:inssAuto;
   const dep=+state.folha.dep||0;
@@ -2904,7 +2957,7 @@ function calc13(f){
   const anoRef=f.inicio?+f.inicio.slice(0,4):+hojeISO().slice(0,4);
   const ymParc1=ov.ymParc1||(anoRef+"-11");
   const ymParc2=ov.ymParc2||(anoRef+"-12");
-  return{avos,brutoTotal,pct1,parc1,parc1Auto,inss,inssAuto,irrf,irrfAuto,baseIR,parc2,ymParc1,ymParc2,
+  return{adiantou,avos,brutoTotal,pct1,parc1,parc1Auto,inss,inssAuto,irrf,irrfAuto,baseIR,parc2,ymParc1,ymParc2,
     autoParc1:ov.parc1==null,autoInss:ov.inss==null,autoIrrf:ov.irrf==null,
     autoYmParc1:!ov.ymParc1,autoYmParc2:!ov.ymParc2,total:r2(parc1+parc2)};
 }
@@ -2922,7 +2975,7 @@ function linhaDoTempoFerias(f){
   if(!f.inicio)return[];
   const c=calcFerias(f),c13=calc13(f),defas=defasagemFerias(f),salNormal=salarioNormalFerias(f);
   const extras=f.extrasLinhaTempo||{},ovLinha=f.overrideLinha||{};
-  const ymIni=ymOfIso(f.inicio),ymFim=ymAdd(ymIni,2);
+  const ymIni=ymOfIso(f.inicio),ymUltFer=ymOfIso(fimFerias(f)),ymFim=[ymAdd(ymIni,2),ymAdd(ymUltFer,defas)].sort().pop();
   const rows=[];
   for(let ym=c.mesPagamento<ymIni?c.mesPagamento:ymIni;ym<=ymFim&&rows.length<6;ym=ymAdd(ym,1)){
     const civilRef=ymAdd(ym,-defas);
@@ -2932,7 +2985,7 @@ function linhaDoTempoFerias(f){
     const ex=extras[ym]||{nome:"",valor:0};
     const pagFerias=ym===c.mesPagamento?c.totalReceber:0;
     let treze13=0,nomeTreze="";
-    if(ym===c13.ymParc1){treze13=c13.parc1;nomeTreze="1ª parcela";}
+    if(ym===c13.ymParc1&&!c13.adiantou){treze13=c13.parc1;nomeTreze="1ª parcela";}
     else if(ym===c13.ymParc2){treze13=c13.parc2;nomeTreze="2ª parcela";}
     rows.push({ymPag:ym,civilRef,sal,salNormal,salAuto,salReduzido:salLiq,autoSal:ovLinha[ym]==null,
       buraco:r2(Math.max(0,salNormal-salLiq)),pagFerias,treze13,nomeTreze,
@@ -3188,15 +3241,21 @@ function aplicarLinhaFerias(id,i){
   const extraSoma=r2(r.pagFerias+r.treze13+r.extraValor);
   const partes=[];
   if(reduz)partes.push("Salário: "+fmt(m.salario)+" → "+fmt(r.salReduzido)+" (dias de férias no mês de "+lbl(r.civilRef)+")");
-  if(extraSoma>0)partes.push("Extra: "+fmt(m.extra||0)+" → "+fmt(r2((m.extra||0)+extraSoma))+" (+"+fmt(extraSoma)+")");
+  const jaAplicado=+((f.aplicado||{})[r.ymPag]||0);
+  const extraNovo=r2((+m.extra||0)-jaAplicado+extraSoma);
+  if(extraSoma>0||jaAplicado)partes.push("Extra: "+fmt(m.extra||0)+" → "+fmt(extraNovo)+(jaAplicado?" (troca os "+fmt(jaAplicado)+" aplicados antes)":" (+"+fmt(extraSoma)+")"));
   if(!partes.length){alert("Nada a aplicar nesta linha.");return;}
   if(!confirm("Aplicar em "+lbl(r.ymPag)+"?\n\n"+partes.join("\n")))return;
   if(reduz){if(m._salarioPreFerias==null)m._salarioPreFerias=m.salario;m.salario=r.salReduzido;}
-  if(extraSoma>0)m.extra=r2((+m.extra||0)+extraSoma);
+  if(extraSoma>0||jaAplicado){m.extra=extraNovo;if(!f.aplicado)f.aplicado={};f.aplicado[r.ymPag]=extraSoma;}
   if(i===0)f._aplicadoMes=r.ymPag;
   save();alert("Aplicado em "+lbl(r.ymPag)+".");render();
 }
-function restaurarSalarioPreFerias(ym){const m=state.meses.find(x=>x.ym===ym);if(!m||m._salarioPreFerias==null)return;m.salario=m._salarioPreFerias;delete m._salarioPreFerias;save();render();}
+// desfaz o "aplicar": volta o salário original e tira do Extra o que esta(s) férias somaram
+function restaurarSalarioPreFerias(ym){const m=state.meses.find(x=>x.ym===ym);if(!m)return;
+  if(m._salarioPreFerias!=null){m.salario=m._salarioPreFerias;delete m._salarioPreFerias;}
+  (state.ferias||[]).forEach(f=>{const v=+((f.aplicado||{})[ym]||0);if(v){m.extra=r2(Math.max(0,(+m.extra||0)-v));delete f.aplicado[ym];}});
+  save();render();}
 function criarMetaPosFerias(id){
   const f=feriasGet(id);if(!f)return;
   const alvo=reservaSugeridaFerias(f),c=calcFerias(f);
@@ -3240,7 +3299,7 @@ function cenarioDasFerias(f){
   const c=calcFerias(f),c13=calc13(f);
   add("Recibo de férias",c.totalReceber,c.mesPagamento);
   linhaDoTempoFerias(f).forEach(r=>{if(r.buraco>0.005)add("Salário reduzido ("+lbl(r.civilRef)+")",-r.buraco,r.ymPag);});
-  add("13º — 1ª parcela",c13.parc1,c13.ymParc1);add("13º — 2ª parcela",c13.parc2,c13.ymParc2);
+  if(!c13.adiantou)add("13º — 1ª parcela",c13.parc1,c13.ymParc1);add("13º — 2ª parcela",c13.parc2,c13.ymParc2);
   const p=planoAtivo(f);if(p)add("Viagem: "+(p.nome||"viagem")+(p.destino?" ("+p.destino+")":""),-custoPlano(p,f),ymOfIso(idaViagem(f,p)||f.inicio));
   return{cenario:{nome:"Férias — "+(f.nome||"Férias")+" (automático)",itens:[],extras:ex,_ferias:f.id},fora,base:base.ym};
 }
@@ -3414,8 +3473,8 @@ function vFerias(){
         ${r.buraco>0.005?`<tr><td colspan="2" class="note" style="padding:0 4px;color:#be123c">${fmt(r.buraco)} a menos de salário que um mês normal (${fmt(r.salNormal)})</td></tr>`:""}
       </table>
       <div class="row" style="margin-top:6px">
-        <button class="btn" style="padding:3px 10px" onclick="aplicarLinhaFerias('${f.id}',${i})">✓ aplicar em ${lbl(r.ymPag)}</button>
-        ${m&&m._salarioPreFerias!=null?`<button class="btn" style="padding:3px 8px" onclick="restaurarSalarioPreFerias('${r.ymPag}')" title="Restaurar salário original">↺ salário</button>`:""}
+        <button class="btn" style="padding:3px 10px" onclick="aplicarLinhaFerias('${f.id}',${i})">${(f.aplicado||{})[r.ymPag]!=null||(m&&m._salarioPreFerias!=null)?"↻ reaplicar":"✓ aplicar"} em ${lbl(r.ymPag)}</button>
+        ${m&&(m._salarioPreFerias!=null||(f.aplicado||{})[r.ymPag])?`<button class="btn" style="padding:3px 8px" onclick="restaurarSalarioPreFerias('${r.ymPag}')" title="Desfazer: volta o salário e o Extra de antes">↺ desfazer</button>`:""}
         ${!m?'<span class="note" style="margin:0">mês ainda não criado</span>':""}
       </div>
     </div>`;};
@@ -3447,7 +3506,7 @@ function vFerias(){
       </div>
       <table style="font-size:12px;margin-top:6px;max-width:480px">
         <tr><td>13º integral (bruto × ${c13.avos}/12)</td><td class="n">${fmt(c13.brutoTotal)}</td><td></td></tr>
-        ${linhaOverride("1ª parcela ("+c13.pct1+"% do bruto, sem desconto)","parc1",c13.parc1Auto,c13.parc1,c13.autoParc1,"setTrezeOverride")}
+        ${c13.adiantou?`<tr><td>1ª parcela <span class="pill" style="background:#ede9fe;color:#6d28d9;font-size:10px">já vem no recibo de férias (adiantar 13º)</span></td><td class="n">${fmt(c13.parc1)}</td><td></td></tr>`:linhaOverride("1ª parcela ("+c13.pct1+"% do bruto, sem desconto)","parc1",c13.parc1Auto,c13.parc1,c13.autoParc1,"setTrezeOverride")}
         ${linhaOverride("− INSS (sobre o 13º integral)","inss",c13.inssAuto,c13.inss,c13.autoInss,"setTrezeOverride")}
         ${linhaOverride("− IRRF (sobre o 13º integral)","irrf",c13.irrfAuto,c13.irrf,c13.autoIrrf,"setTrezeOverride")}
         <tr><td>− 1ª parcela já paga</td><td class="n">− ${fmt(c13.parc1)}</td><td></td></tr>
@@ -4017,7 +4076,7 @@ function after(){
     const rendaPrev=Math.max(holt(ms.map(renda)),0);
     const labs=[],dBase=[],dAg=[],dSob=[];
     for(let k=1;k<=6;k++){const ym=ymAdd(ms[ms.length-1].ym,k);labs.push(lbl(ym));
-      const ag=futurosEm(ym).reduce((s,f)=>s+f.valor,0);
+      const ag=futurosNovos(ym).reduce((s,f)=>s+f.valor,0);
       dBase.push(Math.round(base));dAg.push(Math.round(ag));dSob.push(Math.round(rendaPrev-base-ag));}
     chart("cAgenda",{type:"bar",data:{labels:labs,datasets:[
       {label:"Contas (padrão)",data:dBase,backgroundColor:"#cbd5e1",stack:"s"},
