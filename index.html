@@ -3173,13 +3173,16 @@ async function fsLer(){
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(erroFs(r.status,j));
   const f=j.fields||{},sv=k=>f[k]&&f[k].stringValue;
   return{cifra:sv("cifra"),iv:sv("iv"),salt:sv("salt"),gz:!!(f.gz&&f.gz.booleanValue),versao:+((f.versao&&f.versao.integerValue)||0),por:sv("por"),em:f.em&&f.em.timestampValue,updateTime:j.updateTime};}
-async function fsGravar(d,updateTime){
-  const pre=updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
+// updateTime: grava só se ninguém gravou depois (concorrência otimista). semCheck: grava direto.
+async function fsGravar(d,updateTime,semCheck){
+  const pre=semCheck?"":updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
   const corpo={fields:{cifra:{stringValue:d.cifra},iv:{stringValue:d.iv},salt:{stringValue:d.salt},gz:{booleanValue:d.gz},
     versao:{integerValue:String(d.versao)},por:{stringValue:sync.email||""},em:{timestampValue:new Date().toISOString()}}};
-  const r=await fetch(fsUrl()+"?"+pre,{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
+  const r=await fetch(fsUrl()+(pre?"?"+pre:""),{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
   const j=await r.json().catch(()=>({}));
-  if(r.status===409||r.status===412||(r.status===400&&/FAILED_PRECONDITION|precondition/i.test(JSON.stringify(j))))return{conflito:true};
+  const st=(j.error&&j.error.status)||"";
+  if(r.status===409||r.status===412||st==="FAILED_PRECONDITION"||st==="ABORTED"||st==="ALREADY_EXISTS")
+    return{conflito:true,detalhe:r.status+" "+st+" "+((j.error&&j.error.message)||"")};
   if(!r.ok)throw new Error(erroFs(r.status,j));return{updateTime:j.updateTime};}
 
 // ---- senha da família (1ª vez cria; nos outros aparelhos, confere abrindo os dados) ----
@@ -3204,6 +3207,7 @@ async function sincronizar(manual){
     try{
       if(typeof navigator!=="undefined"&&navigator.onLine===false){statusSync("offline");return;}
       statusSync("sincronizando");
+      let ultimoConflito="";
       for(let t=0;t<4;t++){
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
@@ -3215,11 +3219,12 @@ async function sincronizar(manual){
         if(rem&&!tinhaPendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
         const d=await cifrar(state);d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
         if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
-        const w=await fsGravar(d,rem&&rem.updateTime);
-        if(w.conflito)continue; // outro aparelho gravou no meio: baixa de novo e junta
+        // 3 tentativas com a checagem; na 4ª (logo depois de baixar e juntar de novo) grava direto
+        const w=await fsGravar(d,rem&&rem.updateTime,t===3&&!!rem);
+        if(w.conflito){ultimoConflito=w.detalhe;continue;} // outro aparelho gravou no meio: baixa de novo e junta
         sync.versao=d.versao;sync.pendente=false;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();statusSync("ok");return;
       }
-      throw new Error("Muitas alterações ao mesmo tempo — tente de novo em instantes.");
+      throw new Error("Não consegui gravar na nuvem (resposta do Firebase: "+ultimoConflito+"). Tente de novo; se repetir, mande um print.");
     }catch(e){statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
     finally{syncEmCurso=null;}
   })();
