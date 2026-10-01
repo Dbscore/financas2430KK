@@ -71,7 +71,7 @@
   <p class="eyebrow">Finanças da família · standalone</p>
   <div class="flexbet">
     <h1 id="titulo" style="cursor:pointer" title="Clique para renomear" onclick="renomear()">Minhas Finanças</h1>
-    <span id="savestate" class="note"></span>
+    <span class="row" style="gap:10px"><span id="syncstate" class="note" style="cursor:pointer;margin:0" onclick="go('backup')"></span><span id="savestate" class="note" style="margin:0"></span></span>
   </div>
   <p class="sub">Dados salvos só neste navegador · faça backups na aba Backup</p>
   <div id="alerta"></div>
@@ -251,11 +251,63 @@ function restaurarBackupAuto(dia){
 let saveT=null;
 function save(){
   clearTimeout(saveT);
+  state._atualizadoEm=Date.now();
   document.getElementById("savestate").textContent="Salvando…";
   saveT=setTimeout(()=>{
-    try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();document.getElementById("savestate").textContent="Salvo neste navegador";}
+    try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
     catch(e){document.getElementById("savestate").textContent="Não foi possível salvar";}
+    marcarPendente();
   },400);
+}
+// grava no aparelho sem marcar como alteração do usuário (usado ao receber dados da sincronização)
+function salvarLocal(){try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();}catch(e){}}
+
+// ---- Exclusões registradas: sem isso, ao juntar dados de dois aparelhos o que foi apagado num
+// deles "voltaria" do outro. Guarda {chave: quando}. Registros de lista usam o id (ou ym, nos
+// meses); chaves de objeto usam o caminho ("/meses/2026-10/contas/Luz"). ----
+function marcarApagado(k){if(!state._apagados)state._apagados={};state._apagados[k]=Date.now();}
+
+// ---- Juntar dois estados (sincronização e "Importar e juntar") ----
+// Listas de registros com id (ou ym): união, sem duplicar; registro nos dois lados é juntado campo a
+// campo. Objetos: união das chaves. Valor diferente nos dois lados: vale o do lado editado mais
+// recentemente (_atualizadoEm). Listas sem id (ex.: faixas do IRRF): vale o lado mais recente.
+// O que estiver em _apagados (de qualquer lado) não volta.
+function mesclarEstados(a,b){
+  const aVence=(+a._atualizadoEm||0)>=(+b._atualizadoEm||0);
+  const tomb={...(b._apagados||{}),...(a._apagados||{})};
+  Object.keys(b._apagados||{}).forEach(k=>{tomb[k]=Math.max(tomb[k]||0,b._apagados[k]);});
+  const obj=x=>x&&typeof x==="object"&&!Array.isArray(x);
+  const chave=x=>obj(x)?(x.id!=null?x.id:(x.ym!=null?x.ym:null)):null;
+  function m(x,y,path){
+    if(Array.isArray(x)&&Array.isArray(y)){
+      const todos=[...x,...y];
+      if(!todos.length)return[];
+      if(!todos.every(e=>chave(e)!=null))return aVence?x:y;
+      const ordem=[],mapa=new Map();
+      const add=(e,lado)=>{const k=String(chave(e));if(tomb[k])return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
+      (aVence?x:y).forEach(e=>add(e,aVence?"x":"y"));(aVence?y:x).forEach(e=>add(e,aVence?"y":"x"));
+      return ordem.map(k=>{const v=mapa.get(k);return v.x&&v.y?m(v.x,v.y,path+"/"+k):(v.x||v.y);});
+    }
+    if(obj(x)&&obj(y)){
+      const o={};
+      new Set([...Object.keys(x),...Object.keys(y)]).forEach(k=>{
+        const p=path+"/"+k;if(tomb[p])return;
+        if(k==="_apagados")return;
+        o[k]=(k in x&&k in y)?m(x[k],y[k],p):(k in x?x[k]:y[k]);
+      });
+      return o;
+    }
+    return aVence?x:y;
+  }
+  const r=m(a,b,"");
+  const limite=Date.now()-180*86400000; // esquece exclusões com mais de 6 meses
+  r._apagados={};Object.entries(tomb).forEach(([k,t])=>{if(t>limite)r._apagados[k]=t;});
+  r._atualizadoEm=Math.max(+a._atualizadoEm||0,+b._atualizadoEm||0);
+  return r;
+}
+// renomear/mesclar conta mexe em muitos lugares; guardamos o histórico e reaplicamos depois de juntar
+function reaplicarRenomes(){
+  (state._renomes||[]).slice().sort((x,y)=>x.ts-y.ts).forEach(r=>{if(allContas().includes(r.de))mesclarContas(r.de,r.para,true);});
 }
 
 // ============ HELPERS ============
@@ -306,7 +358,7 @@ function addItemFatura(idx,n){
   save();render();
 }
 function delItemFatura(idx,n,id){
-  const m=state.meses[idx];if(m.itensFatura&&m.itensFatura[n])m.itensFatura[n]=m.itensFatura[n].filter(x=>x.id!==id);
+  marcarApagado(id);const m=state.meses[idx];if(m.itensFatura&&m.itensFatura[n])m.itensFatura[n]=m.itensFatura[n].filter(x=>x.id!==id);
   save();render();
 }
 const tipoOf=n=>{if(state.tipos&&n in state.tipos)return state.tipos[n]?"Fixo":"Variável";return FIXO_DEFAULT[n]?"Fixo":"Variável";};
@@ -624,6 +676,7 @@ function addMov(ym){
 function delMov(ym,id){
   const mv=(state.movs[ym]||[]).find(x=>x.id===id);
   if(mv&&!confirm('Excluir o lançamento "'+mv.nome+'" ('+fmt(mv.valor)+')?'))return;
+  marcarApagado(id);
   state.movs[ym]=(state.movs[ym]||[]).filter(x=>x.id!==id);save();render();
 }
 function setMovCat(ym,id,c){const mv=(state.movs[ym]||[]).find(x=>x.id===id);if(mv){mv.cat=c;save();render();}}
@@ -1372,7 +1425,7 @@ function vAgenda(){
     <td class="n"><input type="number" value="${f.valor}" style="width:90px" onchange="state.futuros[${i}].valor=+this.value;save();render()"></td>
     <td>${lbl(f.inicio)}</td><td>${f.fim?lbl(f.fim):(f.tipo==="unico"?lbl(f.inicio):"—")}</td>
     <td>${ativoEm(f,nextYm)?'<span class="pill teal">ativo no próx. mês</span>':(f.inicio>nextYm?'<span class="pill" style="background:#fef3c7;color:#92400e">futuro</span>':'<span class="pill" style="background:#f1f5f9;color:#64748b">encerrado</span>')}</td>
-    <td><button class="btn danger" onclick="state.futuros.splice(${i},1);save();render()">✕</button></td></tr>`).join("")}</table></div>`:'<div class="card"><p class="note">Nenhum compromisso cadastrado ainda. Ex.: em agosto entra "Matrícula escola" (único) + "Mensalidade escola" (recorrente).</p></div>'}
+    <td><button class="btn danger" onclick="delFuturo('${f.id}',${i})">✕</button></td></tr>`).join("")}</table></div>`:'<div class="card"><p class="note">Nenhum compromisso cadastrado ainda. Ex.: em agosto entra "Matrícula escola" (único) + "Mensalidade escola" (recorrente).</p></div>'}
 
   <div class="card"><h3>Fluxo projetado — próximos 6 meses (padrão histórico + agenda)</h3>
     <div class="chartbox sm"><canvas id="cAgenda"></canvas></div>
@@ -1382,6 +1435,7 @@ function vAgenda(){
   <table><tr><th>Mês</th><th>Compromissos</th><th class="n">Total agendado</th></tr>
   ${prox6.filter(p=>p.its.length).map(p=>`<tr><td>${lbl(p.ym)}</td><td>${p.its.map(f=>f.nome).join(", ")}</td><td class="n">${fmt0(p.total)}</td></tr>`).join("")}</table></div>`:""}`;
 }
+function delFuturo(id,i){if(id&&id!=='undefined')marcarApagado(id);state.futuros.splice(i,1);save();render();}
 function addFuturo(){
   const nome=document.getElementById("fuNome").value.trim();
   const valor=+document.getElementById("fuValor").value||0;
@@ -1657,7 +1711,7 @@ function parcelaInfo(n,ym){
 }
 function setParcela(n,inicio,total,multa,moraDia,defasado,atrasoDesde,diasTipico,valorOrig){if(!state.parcelas)state.parcelas={};
   if(inicio&&+total>0)state.parcelas[n]={inicio,total:+total,multa:+multa||0,moraDia:+moraDia||0,defasado:!!defasado,atrasoDesde:atrasoDesde||null,diasTipico:+diasTipico||0,valorOrig:+valorOrig||0};
-  else delete state.parcelas[n];save();render();}
+  else{delete state.parcelas[n];marcarApagado("/parcelas/"+n);}save();render();}
 // valor ORIGINAL da parcela (do contrato); se não configurado, usa o valor lançado no mês
 function valorParcOrig(n,ym){const cfg=parcelaCfg(n);return (cfg&&+cfg.valorOrig>0)?+cfg.valorOrig:valorParcela(n,ym);}
 // total já pago numa dívida parcelada: meses registrados = exato; antes da ferramenta = estimado
@@ -1925,7 +1979,7 @@ function novoMes(copiar){
   if(ferNoMes.length)avisos.push("Este mês tem férias previstas ("+ferNoMes.map(f=>f.nome||"Férias").join(", ")+") — confira a aba Férias para aplicar o líquido e o salário proporcional.");
   if(avisos.length)alert(lbl(ym)+":\n\n"+avisos.join("\n"));
 }
-function mesclarContas(old,novo){
+function mesclarContas(old,novo,silencioso){
   let movidos=0,somados=0,avisoParc="";
   // captura categoria/tipo EFETIVOS antes de mexer (inclui padrões da planilha)
   const catExplicitaNovo=(state.catConta&&state.catConta[novo])||CAT[novo]||null;
@@ -1970,9 +2024,11 @@ function mesclarContas(old,novo){
   if(state.simg&&Array.isArray(state.simg.baseRows))state.simg.baseRows.forEach(r=>{if(r.nome===old)r.nome=novo;});
   delete edParcOpen[old];delete edDetOpen[old];delete calcSel[old];delete simPagData[old];
   if(contaSel===old)contaSel=novo;
-  save();render();
+  if(silencioso)return;
+  registrarRenome(old,novo);save();render();
   alert('Mescladas: "'+old+'" + "'+novo+'" → "'+novo+'"\n\n• '+movidos+' mês(es) com valor movido\n• '+somados+' mês(es) onde AMBAS tinham valor (somei — confira se não era duplicidade)'+avisoParc+'\n\nO histórico agora é um só: gráficos, tendências e previsão da conta enxergam a linha completa.');
 }
+function registrarRenome(de,para){if(!state._renomes)state._renomes=[];state._renomes.push({id:uid(),de,para,ts:Date.now()});}
 function renomearConta(old){
   const novo=(prompt('Novo nome para "'+old+'":',old)||"").trim();
   if(!novo||novo===old)return;
@@ -1999,11 +2055,11 @@ function renomearConta(old){
   if(state.simg&&Array.isArray(state.simg.baseRows))state.simg.baseRows.forEach(r=>{if(r.nome===old)r.nome=novo;});
   delete edParcOpen[old];delete edDetOpen[old];delete calcSel[old];delete simPagData[old];
   if(contaSel===old)contaSel=novo;
-  save();render();
+  registrarRenome(old,novo);save();render();
   alert('Renomeada: "'+old+'" → "'+novo+'"\n\nPropagado em: todos os meses, status de pagamento, parcelamento/dívidas, vencimento, categoria, tipo, orçado, fatura, agenda e cenários de simulação.');
 }
-function delMes(i){if(confirm("Excluir "+lbl(state.meses[i].ym)+"?")){state.meses.splice(i,1);edSel=null;save();render();}}
-function delConta(i,n){if(!confirm('Remover "'+n+'" de '+lbl(state.meses[i].ym)+"? (só deste mês; o histórico dos outros meses não é afetado)"))return;delete state.meses[i].contas[n];save();render();}
+function delMes(i){if(confirm("Excluir "+lbl(state.meses[i].ym)+"?")){marcarApagado(state.meses[i].ym);state.meses.splice(i,1);edSel=null;save();render();}}
+function delConta(i,n){if(!confirm('Remover "'+n+'" de '+lbl(state.meses[i].ym)+"? (só deste mês; o histórico dos outros meses não é afetado)"))return;delete state.meses[i].contas[n];marcarApagado("/meses/"+state.meses[i].ym+"/contas/"+n);save();render();}
 function addConta(i){
   const n=document.getElementById("ncNome").value.trim();const v=+document.getElementById("ncVal").value||0;
   if(!n)return;state.meses[i].contas[n]=v;save();render();
@@ -2152,7 +2208,7 @@ function addMetaCurto(){const nome=prompt("Nome da meta (ex.: Reserva mudança, 
 function delMetaCurto(id){
   const mt=state.metasCurto.find(x=>x.id===id);
   if(mt&&!confirm('Excluir a meta "'+mt.nome+'"'+(mt.guardado>0?" (já tinha "+fmt(mt.guardado)+" guardado)":"")+"?"))return;
-  state.metasCurto=state.metasCurto.filter(x=>x.id!==id);save();render();
+  marcarApagado(id);state.metasCurto=state.metasCurto.filter(x=>x.id!==id);save();render();
 }
 function setAloc(k,v){state.aloc.itens[k]=Math.max(0,+v||0);save();render();}
 function addAporte(){
@@ -2170,7 +2226,7 @@ function delAporte(id){
     if(m&&confirm("Este aporte já foi somado ao Extra de "+lbl(a.ym)+". Remover também "+fmt(a.valor)+" do Extra do mês?"))
       m.extra=Math.round(Math.max(0,(+m.extra||0)-a.valor)*100)/100;
   }
-  state.aportes=state.aportes.filter(x=>x.id!==id);save();render();
+  marcarApagado(id);state.aportes=state.aportes.filter(x=>x.id!==id);save();render();
 }
 // aplica aportes pendentes de um mês específico (chamado ao criar mês novo)
 function aplicarAportesDoMes(ym){
@@ -2577,7 +2633,7 @@ function criarFerias(){
 function delFerias(id){
   const f=feriasGet(id);if(!f)return;
   if(!confirm('Excluir "'+(f.nome||"Férias")+'"? Remove o planejamento e os gastos registrados (não desfaz o que já foi aplicado a meses/caixa).'))return;
-  state.ferias=state.ferias.filter(x=>x.id!==id);if(ferSel===id)ferSel=null;save();render();
+  marcarApagado(id);state.ferias=state.ferias.filter(x=>x.id!==id);if(ferSel===id)ferSel=null;save();render();
 }
 // Datas digitadas: o navegador dispara "change" a cada dígito do ano (0002, 0020, 0202...).
 // Só aceita datas/meses completos com ano plausível — senão ignora sem redesenhar (o campo segue editável).
@@ -2598,7 +2654,7 @@ function addPlano(id){
 function delPlano(id,pid){
   const f=feriasGet(id);if(!f)return;
   if(!confirm("Excluir este plano de viagem?"))return;
-  f.viagem.planos=f.viagem.planos.filter(x=>x.id!==pid);
+  marcarApagado(pid);f.viagem.planos=f.viagem.planos.filter(x=>x.id!==pid);
   if(f.viagem.planoAtivoId===pid)f.viagem.planoAtivoId=(f.viagem.planos[0]||{}).id||null;
   save();render();
 }
@@ -2613,7 +2669,7 @@ function addTrecho(id,pid,modo){
   else Object.assign(t,{valor:0});
   p.trechos.push(t);save();render();
 }
-function delTrecho(id,pid,tid){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(p){p.trechos=p.trechos.filter(x=>x.id!==tid);save();render();}}
+function delTrecho(id,pid,tid){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(p){marcarApagado(tid);p.trechos=p.trechos.filter(x=>x.id!==tid);save();render();}}
 function setTrechoCampo(id,pid,tid,campo,valor){
   const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);const t=p&&(p.trechos||[]).find(x=>x.id===tid);
   if(t){t[campo]=valor;save();render();}
@@ -2625,7 +2681,7 @@ function addItemPlano(id,pid){
   if(!nome||!valor){alert("Preencha nome e valor.");return;}
   p.itens.push({id:uid(),nome,valor});save();render();
 }
-function delItemPlano(id,pid,iid){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(p){p.itens=p.itens.filter(x=>x.id!==iid);save();render();}}
+function delItemPlano(id,pid,iid){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(p){marcarApagado(iid);p.itens=p.itens.filter(x=>x.id!==iid);save();render();}}
 function addGastoFerias(id){
   const f=feriasGet(id);if(!f)return;
   const nome=document.getElementById("gfNome_"+id).value.trim();
@@ -2636,7 +2692,7 @@ function addGastoFerias(id){
   f.viagem.gastos.push({id:uid(),nome,valor,cat,data:dt,planoId:pa?pa.id:null});
   save();render();
 }
-function delGastoFerias(id,gid){const f=feriasGet(id);if(f){f.viagem.gastos=f.viagem.gastos.filter(x=>x.id!==gid);save();render();}}
+function delGastoFerias(id,gid){const f=feriasGet(id);if(f){marcarApagado(gid);f.viagem.gastos=f.viagem.gastos.filter(x=>x.id!==gid);save();render();}}
 
 // ---- integrações com o resto do app ----
 function setDefasagemFerias(id,v){const f=feriasGet(id);if(f){f.defasagemPagto=(v===""||v==null)?null:+v;save();render();}}
@@ -3036,14 +3092,197 @@ function vFerias(){
   return header+secPeriodo+secRecebo+secBuraco+secEnvelope+secPlanos+secGastos+secInteligencia;
 }
 
+// ============ CONTA E SINCRONIZAÇÃO (Firebase, criptografado no aparelho) ============
+// Login: Firebase Authentication (e-mail/senha). Dados: um documento no Firestore com o estado
+// inteiro CRIPTOGRAFADO (AES-256-GCM) com uma chave derivada da "senha da família" (PBKDF2), que
+// nunca sai dos aparelhos — o Google guarda só um bloco ilegível. Funciona sem internet: salva no
+// aparelho e sincroniza quando der. Conflitos: mesclarEstados() (nada se perde).
+// A configuração abaixo NÃO é segredo (identifica o projeto); quem protege são o login e as regras.
+const FB={apiKey:"AIzaSyCXKplg0f0fnN6pVSMJUcQAxEiBipm2fQU",projectId:"financas-app-ca600"};
+const FB_DOC="casas/principal";
+const KEY_SYNC=KEY+"__sync";
+let sync=carregarSync();
+let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=false;
+function carregarSync(){try{return JSON.parse(localStorage.getItem(KEY_SYNC)||"{}");}catch(e){return{};}}
+function gravarSync(){try{localStorage.setItem(KEY_SYNC,JSON.stringify(sync));}catch(e){}}
+const syncAtivo=()=>!!(sync.refreshToken&&sync.chave);
+function marcarPendente(){if(!syncAtivo())return;sync.pendente=true;gravarSync();clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),2500);}
+
+// ---- login (API REST do Firebase Auth) ----
+function traduzErroFb(m){m=m||"";
+  if(/EMAIL_EXISTS/.test(m))return"Esse e-mail já tem conta — use Entrar.";
+  if(/EMAIL_NOT_FOUND|INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS/.test(m))return"E-mail ou senha incorretos.";
+  if(/WEAK_PASSWORD/.test(m))return"A senha precisa ter pelo menos 6 caracteres.";
+  if(/INVALID_EMAIL/.test(m))return"E-mail inválido.";
+  if(/TOO_MANY_ATTEMPTS/.test(m))return"Muitas tentativas. Espere alguns minutos.";
+  if(/TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_NOT_FOUND|USER_DISABLED/.test(m))return"Sessão expirada — entre de novo.";
+  return"Erro do Firebase: "+(m||"sem resposta (sem internet?)");}
+async function fbAuth(caminho,corpo){
+  const r=await fetch("https://identitytoolkit.googleapis.com/v1/"+caminho+"?key="+FB.apiKey,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(corpo)});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(traduzErroFb(j.error&&j.error.message));return j;}
+async function fbToken(forcar){
+  if(!sync.refreshToken)throw new Error("Não conectado.");
+  if(!forcar&&sync.idToken&&Date.now()<sync.exp)return sync.idToken;
+  const r=await fetch("https://securetoken.googleapis.com/v1/token?key="+FB.apiKey,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"grant_type=refresh_token&refresh_token="+encodeURIComponent(sync.refreshToken)});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(traduzErroFb(j.error&&j.error.message));
+  sync.idToken=j.id_token;sync.refreshToken=j.refresh_token;sync.exp=Date.now()+((+j.expires_in||3600)-60)*1000;gravarSync();return sync.idToken;}
+function tokenInfo(){try{const p=sync.idToken.split(".")[1].replace(/-/g,"+").replace(/_/g,"/");return JSON.parse(decodeURIComponent(escape(atob(p))));}catch(e){return{};}}
+const emailVerificado=()=>tokenInfo().email_verified===true;
+async function contaEntrar(criar){
+  const email=(document.getElementById("cxEmail").value||"").trim(),senha=document.getElementById("cxSenha").value||"";
+  if(!email||!senha){alert("Preencha e-mail e senha.");return;}
+  try{statusSync("sincronizando",criar?"criando conta…":"entrando…");
+    const j=await fbAuth(criar?"accounts:signUp":"accounts:signInWithPassword",{email,password:senha,returnSecureToken:true});
+    Object.assign(sync,{email:j.email,idToken:j.idToken,refreshToken:j.refreshToken,exp:Date.now()+((+j.expiresIn||3600)-60)*1000});gravarSync();
+    if(criar)await fbAuth("accounts:sendOobCode",{requestType:"VERIFY_EMAIL",idToken:j.idToken});
+    statusSync("","");render();if(syncAtivo())sincronizar();
+  }catch(e){statusSync("erro",e.message);alert(e.message);}
+}
+async function contaReenviar(){try{await fbAuth("accounts:sendOobCode",{requestType:"VERIFY_EMAIL",idToken:await fbToken()});alert("Link reenviado para "+sync.email+". Confira também o spam.");}catch(e){alert(e.message);}}
+async function contaJaConfirmei(){try{await fbToken(true);if(!emailVerificado())alert("Ainda não aparece como confirmado. Abra o link do e-mail e tente de novo.");render();}catch(e){alert(e.message);}}
+async function contaEsqueci(){const email=(document.getElementById("cxEmail").value||"").trim();if(!email){alert("Digite o e-mail primeiro.");return;}
+  try{await fbAuth("accounts:sendOobCode",{requestType:"PASSWORD_RESET",email});alert("Se existir conta para "+email+", chegou um e-mail para criar uma nova senha.");}catch(e){alert(e.message);}}
+function contaSair(){if(!confirm("Sair da conta neste aparelho? Os dados continuam salvos aqui; só param de sincronizar."))return;sync={};gravarSync();statusSync("","");render();}
+
+// ---- criptografia (Web Crypto, no aparelho) ----
+function b64de(u8){let s="";for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s);}
+function deB64(t){const b=atob(t),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
+async function derivarChave(senha,saltB64){
+  const base=await crypto.subtle.importKey("raw",new TextEncoder().encode(senha),"PBKDF2",false,["deriveKey"]);
+  const k=await crypto.subtle.deriveKey({name:"PBKDF2",salt:deB64(saltB64),iterations:310000,hash:"SHA-256"},base,{name:"AES-GCM",length:256},true,["encrypt","decrypt"]);
+  return b64de(new Uint8Array(await crypto.subtle.exportKey("raw",k)));}
+const chaveAES=(c)=>crypto.subtle.importKey("raw",deB64(c||sync.chave),"AES-GCM",false,["encrypt","decrypt"]);
+async function gzip(u8,comprimir){if(typeof CompressionStream==="undefined")return null;
+  const t=comprimir?new CompressionStream("gzip"):new DecompressionStream("gzip");
+  return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(t)).arrayBuffer());}
+async function cifrar(objeto,chave){
+  const txt=new TextEncoder().encode(JSON.stringify(objeto)),z=await gzip(txt,true),iv=crypto.getRandomValues(new Uint8Array(12));
+  const c=await crypto.subtle.encrypt({name:"AES-GCM",iv},await chaveAES(chave),z||txt);
+  return{cifra:b64de(new Uint8Array(c)),iv:b64de(iv),gz:!!z};}
+async function decifrar(d,chave){
+  let p;try{p=new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:deB64(d.iv)},await chaveAES(chave),deB64(d.cifra)));}
+  catch(e){throw new Error("Senha da família incorreta (não consegui abrir os dados da nuvem).");}
+  return JSON.parse(new TextDecoder().decode(d.gz?await gzip(p,false):p));}
+
+// ---- Firestore (API REST) ----
+const fsUrl=()=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/"+FB_DOC;
+function erroFs(st,j){if(st===403)return"Sem permissão no Firestore: confira as regras e se o seu e-mail está liberado e confirmado.";return"Erro "+st+" do Firestore: "+((j.error&&j.error.message)||"");}
+async function fsLer(){
+  const r=await fetch(fsUrl(),{headers:{Authorization:"Bearer "+await fbToken()}});
+  if(r.status===404)return null;
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(erroFs(r.status,j));
+  const f=j.fields||{},sv=k=>f[k]&&f[k].stringValue;
+  return{cifra:sv("cifra"),iv:sv("iv"),salt:sv("salt"),gz:!!(f.gz&&f.gz.booleanValue),versao:+((f.versao&&f.versao.integerValue)||0),por:sv("por"),em:f.em&&f.em.timestampValue,updateTime:j.updateTime};}
+async function fsGravar(d,updateTime){
+  const pre=updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
+  const corpo={fields:{cifra:{stringValue:d.cifra},iv:{stringValue:d.iv},salt:{stringValue:d.salt},gz:{booleanValue:d.gz},
+    versao:{integerValue:String(d.versao)},por:{stringValue:sync.email||""},em:{timestampValue:new Date().toISOString()}}};
+  const r=await fetch(fsUrl()+"?"+pre,{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===409||r.status===412||(r.status===400&&/FAILED_PRECONDITION|precondition/i.test(JSON.stringify(j))))return{conflito:true};
+  if(!r.ok)throw new Error(erroFs(r.status,j));return{updateTime:j.updateTime};}
+
+// ---- senha da família (1ª vez cria; nos outros aparelhos, confere abrindo os dados) ----
+async function contaSenhaFamilia(){
+  const s1=document.getElementById("cxFam").value||"",s2=(document.getElementById("cxFam2")||{}).value||"";
+  if(s1.length<8){alert("Use pelo menos 8 caracteres na senha da família.");return;}
+  if(typeof crypto==="undefined"||!crypto.subtle){alert("Este navegador não permite criptografia aqui. Abra o app pelo endereço https (GitHub Pages).");return;}
+  try{statusSync("sincronizando","conferindo…");
+    const rem=await fsLer();
+    if(rem){const chave=await derivarChave(s1,rem.salt);await decifrar(rem,chave);sync.chave=chave;sync.salt=rem.salt;sync.versao=null;sync.pendente=true;}
+    else{if(s1!==s2){statusSync("","");alert("É a primeira vez: digite a senha da família duas vezes, iguais.");return;}
+      const salt=b64de(crypto.getRandomValues(new Uint8Array(16)));sync.chave=await derivarChave(s1,salt);sync.salt=salt;sync.versao=null;sync.pendente=true;}
+    gravarSync();render();await sincronizar(true);
+  }catch(e){statusSync("erro",e.message);alert(e.message);}
+}
+
+// ---- o ciclo: baixa o que há de novo, junta, e sobe se houver mudança local ----
+async function sincronizar(manual){
+  if(!syncAtivo())return;
+  if(syncEmCurso)return syncEmCurso;
+  syncEmCurso=(async()=>{
+    try{
+      if(typeof navigator!=="undefined"&&navigator.onLine===false){statusSync("offline");return;}
+      statusSync("sincronizando");
+      for(let t=0;t<4;t++){
+        const tinhaPendente=!!sync.pendente;
+        const rem=await fsLer();
+        if(rem&&rem.versao!==sync.versao){
+          const remoto=migrarEstado(await decifrar(rem));
+          state=migrarEstado(mesclarEstados(state,remoto));reaplicarRenomes();salvarLocal();
+          sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
+        }
+        if(rem&&!tinhaPendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
+        const d=await cifrar(state);d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
+        if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
+        const w=await fsGravar(d,rem&&rem.updateTime);
+        if(w.conflito)continue; // outro aparelho gravou no meio: baixa de novo e junta
+        sync.versao=d.versao;sync.pendente=false;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();statusSync("ok");return;
+      }
+      throw new Error("Muitas alterações ao mesmo tempo — tente de novo em instantes.");
+    }catch(e){statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
+    finally{syncEmCurso=null;}
+  })();
+  return syncEmCurso;
+}
+// redesenha sem atrapalhar quem está digitando
+function renderSeguro(){const a=typeof document!=="undefined"&&document.activeElement;
+  if(a&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName||"")){renderPendente=true;return;}render();}
+function statusSync(tipo,msg){
+  syncStatus={tipo,msg:msg||""};
+  const el=typeof document!=="undefined"&&document.getElementById("syncstate");if(!el||!el.style)return;
+  const hora=sync.ultimo?new Date(sync.ultimo).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):"";
+  const txt=!syncAtivo()?"":tipo==="sincronizando"?"⏳ sincronizando…":tipo==="offline"?"📴 sem internet — salvo no aparelho":tipo==="erro"?"⚠ não sincronizou (ver Backup)":"☁️ sincronizado"+(hora?" às "+hora:"");
+  el.textContent=txt;el.title=msg||"";el.style.color=tipo==="erro"?"var(--rose)":"";
+}
+function cardConta(){
+  const temCrypto=typeof crypto!=="undefined"&&!!crypto.subtle;
+  const lin=t=>`<p class="note" style="margin-top:6px">${t}</p>`;
+  let corpo;
+  if(!sync.refreshToken){
+    corpo=`<div class="row" style="margin-top:6px">
+      <input id="cxEmail" type="email" placeholder="seu e-mail" autocomplete="username" style="min-width:200px">
+      <input id="cxSenha" type="password" placeholder="senha da conta" autocomplete="current-password" style="min-width:160px">
+      <button class="btn primary" onclick="contaEntrar(false)">Entrar</button>
+      <button class="btn" onclick="contaEntrar(true)">Criar conta</button>
+      <button class="btn" style="border:0" onclick="contaEsqueci()">esqueci a senha</button></div>
+      ${lin("Sem entrar, o app funciona normalmente — os dados ficam só neste aparelho. Entrando, eles sincronizam entre os aparelhos de quem estiver liberado.")}`;
+  }else if(!emailVerificado()){
+    corpo=`${lin("Conectado como <b>"+sync.email+"</b>. Falta <b>confirmar o e-mail</b>: abra o link que chegou (veja também o spam) e depois clique em \"Já confirmei\".")}
+      <div class="row" style="margin-top:6px"><button class="btn primary" onclick="contaJaConfirmei()">Já confirmei</button><button class="btn" onclick="contaReenviar()">Reenviar link</button><button class="btn" onclick="contaSair()">Sair</button></div>`;
+  }else if(!sync.chave){
+    corpo=`${lin("Conectado como <b>"+sync.email+"</b> ✔. Agora a <b>senha da família</b>: ela criptografa os dados antes de irem para a nuvem e é a mesma em todos os aparelhos (todos da casa usam a mesma).")}
+      <div class="row" style="margin-top:6px">
+        <input id="cxFam" type="password" placeholder="senha da família (8+ caracteres)" autocomplete="new-password" style="min-width:220px">
+        <input id="cxFam2" type="password" placeholder="repita (só na 1ª vez)" autocomplete="new-password" style="min-width:180px">
+        <button class="btn primary" onclick="contaSenhaFamilia()">Continuar</button><button class="btn" onclick="contaSair()">Sair</button></div>
+      ${lin("⚠ <b>Anote essa senha em lugar seguro.</b> Ela não fica em nenhum servidor: se for esquecida, os dados da nuvem não podem ser recuperados (os deste aparelho e os backups continuam valendo).")}
+      ${temCrypto?"":lin("<b style='color:#be123c'>Este navegador não permite criptografia aqui.</b> Abra o app pelo endereço https (GitHub Pages).")}`;
+  }else{
+    const hora=sync.ultimo?new Date(sync.ultimo).toLocaleString("pt-BR"):"ainda não";
+    corpo=`${lin("Conectado como <b>"+sync.email+"</b> · dados criptografados com a senha da família 🔒")}
+      ${lin("Última sincronização: <b>"+hora+"</b>"+(sync.porUltimo&&sync.porUltimo!==sync.email?" · última alteração na nuvem feita por "+sync.porUltimo:"")+(sync.pendente?" · <b>há alterações deste aparelho para enviar</b>":""))}
+      ${syncStatus.tipo==="erro"?lin("<b style='color:#be123c'>⚠ "+syncStatus.msg+"</b>"):""}
+      <div class="row" style="margin-top:6px"><button class="btn primary" onclick="sincronizar(true).then(()=>render())">Sincronizar agora</button><button class="btn" onclick="contaSair()">Sair</button></div>`;
+  }
+  return `<div class="card" style="border-color:var(--indigo)"><h3>☁️ Conta e sincronização</h3>${corpo}</div>`;
+}
+if(typeof window!=="undefined"&&window.addEventListener){
+  window.addEventListener("online",()=>sincronizar());
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")sincronizar();});
+  document.addEventListener("focusout",()=>{if(renderPendente){renderPendente=false;setTimeout(()=>{const a=document.activeElement;if(!a||!/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName))render();else renderPendente=true;},50);}});
+  setInterval(()=>{if(document.visibilityState==="visible")sincronizar();},60000);
+}
+
 // ============ BACKUP ============
 function vBackup(){
-  return `
+  return cardConta()+`
   <div class="card"><h3>Backup em arquivo (na sua pasta)</h3>
   <p class="note">Os dados vivem no armazenamento deste navegador (localStorage). Para guardá-los numa pasta do PC — e levar para outro computador ou celular — exporte o JSON. Para restaurar, importe o arquivo. Recomendo exportar após fechar cada mês.</p>
   <div class="row" style="margin-top:10px">
     <button class="btn primary" onclick="exportar()">⬇ Exportar backup (.json)</button>
-    <label class="btn" style="cursor:pointer">⬆ Importar backup <input type="file" accept=".json" style="display:none" onchange="importar(this)"></label>
+    <label class="btn" style="cursor:pointer" title="Junta o arquivo com os dados deste aparelho, sem apagar nada">⬆ Importar e juntar <input type="file" accept=".json" style="display:none" onchange="importarJuntar(this)"></label>
+    <label class="btn" style="cursor:pointer" title="Troca TUDO deste aparelho pelo conteúdo do arquivo">⬆ Importar substituindo <input type="file" accept=".json" style="display:none" onchange="importar(this)"></label>
     <button class="btn danger" onclick="resetar()">Apagar tudo e recomeçar vazio</button>
   </div></div>
   ${(()=>{const lista=listarBackupsAuto();if(!lista.length)return"";
@@ -3055,7 +3294,7 @@ function vBackup(){
   <div class="card"><h3>Como usar em qualquer lugar</h3>
   <p class="note">• <b>No PC:</b> guarde este arquivo HTML numa pasta e abra com dois cliques — não precisa gerar nada de novo, o arquivo é sempre o mesmo e os dados ficam no navegador.<br>
   • <b>No celular:</b> envie o arquivo para si (Drive/WhatsApp) e abra no navegador, ou hospede de graça: crie um repositório no GitHub, suba este arquivo como <code>index.html</code> e ative o GitHub Pages — você ganha um link para acessar de qualquer dispositivo.<br>
-  • <b>Atenção:</b> cada navegador/dispositivo tem seu próprio armazenamento; use o backup JSON para sincronizar entre eles.</p></div>`;
+  • <b>Atenção:</b> cada navegador/dispositivo tem seu próprio armazenamento. Para ter os mesmos dados em todos, entre na conta (card acima) — ou use "Exportar" num e "Importar e juntar" no outro.</p></div>`;
 }
 // O backup leva a categoria e o tipo efetivos de cada conta e as categorias de gasto usadas,
 // para que ele abra igual numa versão do app com categorias-padrão diferentes (ex.: a do iPhone).
@@ -3081,6 +3320,20 @@ function importar(inp){
     backupRotativo(); // guarda o estado atual antes de substituir, dá para desfazer na aba Backup
     state=migrarEstado(bruto);avisoCorrompido=null;
     save();render();alert("Backup importado!");}catch(e){alert("Arquivo inválido: "+e.message);}};
+  r.readAsText(f);
+}
+function importarJuntar(inp){
+  const f=inp.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{
+    const outro=migrarEstado(JSON.parse(r.result));
+    const antes={meses:state.meses.length,movs:Object.values(state.movs||{}).reduce((s,a)=>s+(a||[]).length,0)};
+    backupRotativo();
+    state=mesclarEstados(state,outro);reaplicarRenomes();state=migrarEstado(state);
+    const depois={meses:state.meses.length,movs:Object.values(state.movs||{}).reduce((s,a)=>s+(a||[]).length,0)};
+    save();render();
+    alert("Dados juntados.\n\nMeses: "+antes.meses+" → "+depois.meses+"\nLançamentos avulsos: "+antes.movs+" → "+depois.movs+"\n\nNada deste aparelho foi apagado. Onde os dois lados tinham valores diferentes, valeu o que foi editado por último. Se algo ficou errado, restaure o backup automático de hoje.");
+  }catch(e){alert("Arquivo inválido: "+e.message);}};
   r.readAsText(f);
 }
 function resetar(){if(confirm("Isso apaga TODOS os dados deste navegador e volta ao painel vazio. Exporte um backup antes, se quiser guardar algo. Continuar?")){backupRotativo();state=JSON.parse(JSON.stringify(DEFAULT));save();render();}}
@@ -3265,7 +3518,7 @@ function after(){
     }
   }
 }
-aplicarOlho();render();
+aplicarOlho();render();statusSync("");sincronizar();
 </script>
 <script>if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js");</script>
 </body>

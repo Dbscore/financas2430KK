@@ -1,4 +1,4 @@
-const VERSAO="financas-0393485f58";
+const VERSAO="financas-9654ec811e";
 const ARQUIVOS=["./","index.html","manifest.webmanifest","icon-180.png","icon-192.png","icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js",
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
