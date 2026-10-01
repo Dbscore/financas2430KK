@@ -115,8 +115,10 @@
     .g2{grid-template-columns:minmax(0,1fr);} .g4{grid-template-columns:repeat(2,minmax(0,1fr));}
     .simboard{grid-template-columns:minmax(0,1fr);}
     .metric .val{font-size:18px;}
-    table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-    th,td{white-space:nowrap;}
+    /* tabelas: o texto quebra linha e os números nunca somem; se ainda não couber, o card rola de lado */
+    .card,.scard{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+    th,td{white-space:normal;padding:6px 5px;} td.n,th.n{white-space:nowrap;}
+    .scard input[type=number]{width:96px;}
     select,input,button.btn,textarea,label.btn{font-size:16px;min-height:40px;}
     input[type=checkbox]{min-height:0;}
     input[type=number]{width:100px;}
@@ -305,6 +307,8 @@ function migrarEstado(oIn){
   o.ferias.forEach(fr=>{const v=fr.viagem||(fr.viagem={planos:[],gastos:[]});
     (v.planos||[]).forEach(pl=>{if(pl.destino==null)pl.destino=v.destino||"";if(pl.ida==null&&v.ida)pl.ida=v.ida;if(pl.volta==null&&v.volta)pl.volta=v.volta;});
     (v.gastos||[]).forEach(g=>{if(!g.planoId)g.planoId=v.planoAtivoId||null;});
+    (v.planos||[]).forEach(pl=>{if(pl.alimentacaoDiaPorPessoa!=null&&!(pl.alimentacao&&pl.alimentacao.extras!=null)){pl.alimentacao={...(pl.alimentacao||{}),extras:+pl.alimentacaoDiaPorPessoa};}delete pl.alimentacaoDiaPorPessoa;
+      if(pl.hospedagem&&!pl.hospedagem.inclui)pl.hospedagem.inclui={};});
     if(fr.diasDireito==null)fr.diasDireito=30;if(fr.aquisitivo==null)fr.aquisitivo="atual";});
   return o;
 }
@@ -380,38 +384,62 @@ function salvarLocal(){try{localStorage.setItem(KEY,JSON.stringify(state));backu
 function marcarApagado(k){if(!state._apagados)state._apagados={};state._apagados[k]=Date.now();}
 
 // ---- Juntar dois estados (sincronização e "Importar e juntar") ----
-// Listas de registros com id (ou ym): união, sem duplicar; registro nos dois lados é juntado campo a
-// campo. Objetos: união das chaves. Valor diferente nos dois lados: vale o do lado editado mais
-// recentemente (_atualizadoEm). Listas sem id (ex.: faixas do IRRF): vale o lado mais recente.
-// O que estiver em _apagados (de qualquer lado) não volta.
-function mesclarEstados(a,b){
+// Junção em TRÊS vias quando há "base" (como os dados estavam na última sincronização deste
+// aparelho): para cada campo, se só um lado mudou em relação à base, vale esse lado — assim uma
+// alteração qualquer no outro aparelho não desfaz o que foi feito aqui. Só quando OS DOIS mudaram o
+// mesmo campo vale o lado editado por último (_atualizadoEm). Sem base (1ª vez, "Importar e
+// juntar"), é a junção de duas vias de antes.
+// Listas de registros com id (ou ym): união por chave; registro que existia na base e sumiu de um
+// lado = apagado nesse lado (não volta). Exclusões marcadas em _apagados também não voltam.
+function iguais(x,y){
+  if(x===y)return true;if(typeof x!==typeof y||x===null||y===null||typeof x!=="object")return false;
+  if(Array.isArray(x)!==Array.isArray(y))return false;
+  if(Array.isArray(x)){if(x.length!==y.length)return false;for(let i=0;i<x.length;i++)if(!iguais(x[i],y[i]))return false;return true;}
+  const kx=Object.keys(x),ky=Object.keys(y);if(kx.length!==ky.length)return false;for(const k of kx)if(!(k in y)||!iguais(x[k],y[k]))return false;return true;
+}
+function mesclarEstados(a,b,base){
   const aVence=(+a._atualizadoEm||0)>=(+b._atualizadoEm||0);
   const tomb={...(b._apagados||{}),...(a._apagados||{})};
   Object.keys(b._apagados||{}).forEach(k=>{tomb[k]=Math.max(tomb[k]||0,b._apagados[k]);});
+  const NADA={}; // marcador de "não existe"
   const obj=x=>x&&typeof x==="object"&&!Array.isArray(x);
   const chave=x=>obj(x)?(x.id!=null?x.id:(x.ym!=null?x.ym:null)):null;
-  function m(x,y,path){
+  function m(x,y,z,path){
+    if(iguais(x,y))return x;
+    if(z!==NADA){if(iguais(x,z))return y;if(iguais(y,z))return x;}
     if(Array.isArray(x)&&Array.isArray(y)){
+      const zArr=Array.isArray(z)?z:[];
       const todos=[...x,...y];
-      if(!todos.length)return[];
-      if(!todos.every(e=>chave(e)!=null))return aVence?x:y;
-      const ordem=[],mapa=new Map();
-      const add=(e,lado)=>{const k=String(chave(e));if(tomb[k])return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
-      (aVence?x:y).forEach(e=>add(e,aVence?"x":"y"));(aVence?y:x).forEach(e=>add(e,aVence?"y":"x"));
-      return ordem.map(k=>{const v=mapa.get(k);return v.x&&v.y?m(v.x,v.y,path+"/"+k):(v.x||v.y);});
+      if(todos.length&&todos.every(e=>chave(e)!=null)){
+        const mz=new Map(zArr.filter(e=>chave(e)!=null).map(e=>[String(chave(e)),e]));
+        const ordem=[],mapa=new Map();
+        const add=(e,lado)=>{const k=String(chave(e));if(tomb[k])return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
+        (aVence?x:y).forEach(e=>add(e,aVence?"x":"y"));(aVence?y:x).forEach(e=>add(e,aVence?"y":"x"));
+        const out=[];
+        ordem.forEach(k=>{const v=mapa.get(k),zb=mz.has(k)?mz.get(k):NADA;
+          if(v.x&&v.y){out.push(m(v.x,v.y,zb,path+"/"+k));return;}
+          const so=v.x||v.y;
+          if(zb!==NADA){if(iguais(so,zb))return; } // existia na base, o outro lado apagou e este não mexeu → apagado
+          out.push(so);});
+        return out;
+      }
+      return aVence?x:y;
     }
     if(obj(x)&&obj(y)){
-      const o={};
+      const zo=obj(z)?z:null,o={};
       new Set([...Object.keys(x),...Object.keys(y)]).forEach(k=>{
-        const p=path+"/"+k;if(tomb[p])return;
-        if(k==="_apagados")return;
-        o[k]=(k in x&&k in y)?m(x[k],y[k],p):(k in x?x[k]:y[k]);
+        const p=path+"/"+k;if(tomb[p]||k==="_apagados")return;
+        const zk=zo&&(k in zo)?zo[k]:NADA;
+        if(k in x&&k in y){o[k]=m(x[k],y[k],zk,p);return;}
+        const v=k in x?x[k]:y[k];
+        if(zk!==NADA&&iguais(v,zk))return; // o outro lado removeu esta chave e este não mexeu
+        o[k]=v;
       });
       return o;
     }
     return aVence?x:y;
   }
-  const r=m(a,b,"");
+  const r=m(a,b,base?base:NADA,"");
   const limite=Date.now()-180*86400000; // esquece exclusões com mais de 6 meses
   r._apagados={};Object.entries(tomb).forEach(([k,t])=>{if(t>limite)r._apagados[k]=t;});
   r._atualizadoEm=Math.max(+a._atualizadoEm||0,+b._atualizadoEm||0);
@@ -1214,7 +1242,7 @@ function baseRowsGet(){
   if(S.baseOver&&Object.keys(S.baseOver).length&&!Array.isArray(S.baseRows)){
     const M=baseMesRef();
     S.baseRows=allContas().map(n=>({nome:n,valor:(n in S.baseOver)?+S.baseOver[n]:(+M.contas[n]||0)})).filter(r=>r.valor>0);
-    S.baseOver={};save();
+    S.baseOver={};salvarLocal(); // conversão de formato antigo, não é edição do usuário
   }
   if(Array.isArray(S.baseRows))return S.baseRows;
   const M=baseMesRef();
@@ -1780,25 +1808,31 @@ function aplicarFolha(){
 const brl=x=>parseFloat(x.replace(/\./g,"").replace(",","."));
 function classificaHolerite(texto){
   const T=texto.toUpperCase();
-  const grab=(kw,which)=>{
+  // grab(palavra, modo, excluir): procura a palavra e pega o valor da linha (o último dos 2 primeiros
+  // números depois dela = coluna Provento/Desconto). "excluir" ignora ocorrências cujo texto logo
+  // antes bate (ex.: "DEP. IRRF" e "BASE CÁLC. IRRF" do cabeçalho/rodapé, que não são o desconto).
+  const grab=(kw,which,excluir)=>{
     const re=new RegExp(kw,"g");let m;const vals=[];
     while((m=re.exec(T))){
-      const win=T.slice(m.index,m.index+90);
-      const ns=[...win.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map(x=>brl(x[1])).slice(0,2);
+      if(excluir&&new RegExp(excluir).test(T.slice(Math.max(0,m.index-18),m.index)))continue;
+      const win=T.slice(m.index,m.index+(which==="ultimo"?140:90));
+      const todos=[...win.matchAll(/(\d{1,3}(?:\.\d{3})*,\d{2})/g)].map(x=>brl(x[1]));
+      const ns=which==="ultimo"?todos:todos.slice(0,2);
       if(ns.length)vals.push(ns[ns.length-1]);
     }
     if(!vals.length)return null;
-    return which==="max"?Math.max(...vals):vals[0];
+    return which==="max"?Math.max(...vals):which==="ultimo"?vals[vals.length-1]:vals[0];
   };
+  const CAB="DEP\\.?\\s*$|C[AÁ]LC\\.?\\s*$|BASE\\s*$|CONTRIBUI[CÇ][AÃ]O\\.?\\s*$|SAL\\.?\\s*$";
   const out={outros:[]};
   out.bruto=grab("SAL[AÁ]RIO\\s+(?:MES|BASE|DO\\s+C[AÁ]LCULO)","max")??grab("SAL[AÁ]RIO","max");
   out.creche=grab("CRECHE");
-  out.inss=grab("INSS");
-  out.irrf=grab("IRRF")??grab("IMPOSTO DE RENDA")??grab("\\bIRF\\b");
+  out.inss=grab("INSS\\s*-")??grab("INSS",null,CAB);
+  out.irrf=grab("IRRF\\s*-")??grab("IMPOSTO DE RENDA")??grab("IRRF",null,CAB)??grab("\\bIRF\\b",null,CAB);
   out.va=grab("VA\\s*-\\s*DESC")??grab("VALE\\s*ALIMENT")??grab("ALIMENTA[CÇ][AÃ]O\\s*-?\\s*DESC");
   out.seguro=grab("SEGURO");
   out.pgbl=grab("PGBL")??grab("PREVID[EÊ]NCIA");
-  out.liquido=grab("L[IÍ]QUIDO");
+  out.liquido=grab("L[IÍ]QUIDO\\s+A\\s+RECEBER","ultimo")??grab("L[IÍ]QUIDO","ultimo");
   const extras=[["Coparticipação médica","(?:CONSULTAS|COPART|MEDIC[OA]?\\b)"],["Farmácia","FARM[AÁ]CIA"],["Convênio odontológico","ODONTO"],["Empréstimo consignado","CONSIGN"]];
   for(const[nm,kw]of extras){const v=grab(kw);if(v)out.outros.push({nome:nm,valor:v});}
   return out;
@@ -2155,6 +2189,17 @@ function vEditar(){
     <input id="ncVal" type="number" step="0.01" placeholder="Valor">
     <button class="btn primary" onclick="addConta(${idx})">Adicionar</button>
   </div></div>`;
+}
+// cria um mês qualquer (ex.: nov/dez a partir das férias) copiando as contas do mês anterior mais
+// próximo como provisórias (viram "orçado"), com o salário normal da Folha
+function criarMes(ym){
+  const ja=state.meses.find(x=>x.ym===ym);if(ja)return ja;
+  const ant=meses().filter(x=>x.ym<ym).slice(-1)[0]||meses().slice(-1)[0];
+  const contas={},prov={},orcado={};
+  if(ant)Object.entries(ant.contas).forEach(([k,v])=>{if(+v>0){contas[k]=+v;prov[k]=true;orcado[k]=+v;}});
+  const sal=+state.folha.bruto>0?r2(folhaCalc().liq):(ant?ant.salario:0);
+  const m={ym,salario:sal,extra:0,va:vaACT(ym)||(ant?ant.va:0),rascunho:true,contas,prov,orcado};
+  state.meses.push(m);aplicarAportesDoMes(ym);return m;
 }
 function novoMes(copiar){
   const ms=meses();const last=ms[ms.length-1];
@@ -2996,11 +3041,21 @@ function custoTrecho(t){
 }
 function noitesHosp(h,f,p){return +h.noites>0?+h.noites:Math.max(0,diasViagem(f,p)-1);}
 function custoHospedagem(h,f,p){if(+h.totalManual>0)return r2(+h.totalManual);return r2((+h.diaria||0)*(f?noitesHosp(h,f,p):(+h.noites||0)));}
+// Alimentação: nada vem preenchido sozinho. Por pessoa, o valor de cada refeição feita FORA do
+// hotel (as que a diária já inclui não contam) + lanches/extras por dia. Planos antigos que tinham
+// "R$/pessoa/dia" passam esse valor para "lanches/extras" (o total continua o mesmo).
+const REFEICOES=[["cafe","café da manhã"],["almoco","almoço"],["jantar","jantar"]];
+function alimentacaoDe(p){const a=p.alimentacao||{};const inc=(p.hospedagem&&p.hospedagem.inclui)||{};
+  return{a,inc,extras:a.extras!=null?+a.extras:(p.alimentacaoDiaPorPessoa!=null?+p.alimentacaoDiaPorPessoa:0)};}
 function custoAlimentacao(p,f){
-  const dias=Math.max(1,diasViagem(f,p)||1);
-  const porPessoaDia=(p.alimentacaoDiaPorPessoa!=null)?+p.alimentacaoDiaPorPessoa:sugestaoAlimentacaoDia();
-  return r2(porPessoaDia*(+p.pessoas||1)*dias);
+  const dias=Math.max(1,diasViagem(f,p)||1),pes=+p.pessoas||1,{a,inc,extras}=alimentacaoDe(p);
+  const porDia=REFEICOES.reduce((s,[k])=>s+(inc[k]?0:(+a[k]||0)),0)+extras;
+  return r2(porDia*pes*dias);
 }
+function setRefeicao(id,pid,k,v){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(!p)return;
+  if(!p.alimentacao)p.alimentacao={};p.alimentacao[k]=v===""?null:+v;if(k==="extras")delete p.alimentacaoDiaPorPessoa;save();render();}
+function setHotelInclui(id,pid,k,v){const f=feriasGet(id);const p=f&&(f.viagem.planos||[]).find(x=>x.id===pid);if(!p)return;
+  if(!p.hospedagem.inclui)p.hospedagem.inclui={};p.hospedagem.inclui[k]=!!v;save();render();}
 function custoItensPlano(p){return r2((p.itens||[]).reduce((s,i)=>s+(+i.valor||0),0));}
 function custoPlano(p,f){
   const trechos=r2((p.trechos||[]).reduce((s,t)=>s+custoTrecho(t),0));
@@ -3066,8 +3121,8 @@ function setEnvelopeTeto(id,v){const f=feriasGet(id);if(!f)return;if(!f.envelope
 function setViagemCampo(id,campo,valor){const f=feriasGet(id);if(f){f.viagem[campo]=valor;save();render();}}
 function addPlano(id){
   const f=feriasGet(id);if(!f)return;
-  const p={id:uid(),nome:"Plano "+(f.viagem.planos.length+1),destino:"",ida:null,volta:null,pessoas:f.viagem.pessoas||2,alimentacaoDiaPorPessoa:null,
-    trechos:[],hospedagem:{diaria:0,noites:null,totalManual:null,parcelas:1},itens:[]};
+  const p={id:uid(),nome:"Plano "+(f.viagem.planos.length+1),destino:"",ida:null,volta:null,pessoas:f.viagem.pessoas||2,alimentacao:{},
+    trechos:[],hospedagem:{diaria:0,noites:null,totalManual:null,parcelas:1,inclui:{}},itens:[]};
   f.viagem.planos.push(p);if(!f.viagem.planoAtivoId)f.viagem.planoAtivoId=p.id;save();render();
 }
 function delPlano(id,pid){
@@ -3126,8 +3181,9 @@ function setExtraLinhaTempo(id,ym,campo,valor){
 function aplicarLinhaFerias(id,i){
   const f=feriasGet(id);if(!f)return;
   const r=linhaDoTempoFerias(f)[i];if(!r)return;
-  const m=state.meses.find(x=>x.ym===r.ymPag);
-  if(!m){alert("O mês "+lbl(r.ymPag)+" ainda não existe. Crie-o em Editar dados e volte aqui.");return;}
+  let m=state.meses.find(x=>x.ym===r.ymPag);
+  if(!m){if(!confirm("O mês "+lbl(r.ymPag)+" ainda não existe. Criar agora (com as contas do último mês, marcadas como provisórias) e aplicar?"))return;
+    m=criarMes(r.ymPag);}
   const reduz=r.buraco>0.005;
   const extraSoma=r2(r.pagFerias+r.treze13+r.extraValor);
   const partes=[];
@@ -3490,13 +3546,18 @@ function vFerias(){
         <label style="font-size:12px">Parcelas <input type="number" min="1" value="${pl.hospedagem.parcelas||1}" style="width:50px" onchange="setHospCampo('${f.id}','${pl.id}','parcelas',+this.value||1)"></label>
         ${(pl.hospedagem.parcelas||1)>1?`<button class="btn" style="padding:3px 8px;font-size:12px" onclick="agendarHospedagem('${f.id}','${pl.id}')">📅 agendar</button>`:""}
       </div>
+      <div class="row" style="gap:10px;margin-top:4px"><span class="note" style="margin:0">A diária inclui:</span>${REFEICOES.map(([k,n])=>`<label style="font-size:12px;display:flex;align-items:center;gap:3px"><input type="checkbox" style="width:auto;min-height:0" ${(pl.hospedagem.inclui||{})[k]?"checked":""} onchange="setHotelInclui('${f.id}','${pl.id}','${k}',this.checked)"> ${n}</label>`).join("")}</div>
       <p class="note" style="margin:2px 0">Hospedagem: ${fmt(custoHospedagem(pl.hospedagem,f,pl))}${+pl.hospedagem.totalManual>0?"":" ("+noitesHosp(pl.hospedagem,f,pl)+" noite(s)"+(+pl.hospedagem.noites>0?"":", pelas datas da viagem")+")"}</p>
       <h4>Alimentação</h4>
-      <div class="row" style="gap:6px">
-        <label style="font-size:12px">Pessoas <input type="number" min="1" value="${pl.pessoas||1}" style="width:50px" onchange="setPlanoCampo('${f.id}','${pl.id}','pessoas',+this.value||1)"></label>
-        <label style="font-size:12px">R$/pessoa/dia <input type="number" step="0.01" value="${pl.alimentacaoDiaPorPessoa!=null?pl.alimentacaoDiaPorPessoa:''}" placeholder="sug.: ${fmt0(sugestaoAlimentacaoDia())}" style="width:90px" onchange="setPlanoCampo('${f.id}','${pl.id}','alimentacaoDiaPorPessoa',this.value===''?null:+this.value)"></label>
-      </div>
-      <p class="note" style="margin:2px 0">Alimentação (${diasViagem(f,pl)} dias de viagem): ${fmt(custoAlimentacao(pl,f))}${pl.alimentacaoDiaPorPessoa==null?' <span class="note" style="margin:0">(sugerido pelo seu histórico de "Alimentação fora")</span>':''}</p>
+      ${(()=>{const{a:al,inc,extras}=alimentacaoDe(pl);const dias=diasViagem(f,pl),pes=+pl.pessoas||1;
+        const falta=REFEICOES.filter(([k])=>!inc[k]);
+        return `<div class="row" style="gap:6px">
+          <label style="font-size:12px">Pessoas <input type="number" min="1" value="${pes}" style="width:50px" onchange="setPlanoCampo('${f.id}','${pl.id}','pessoas',+this.value||1)"></label></div>
+        ${falta.length?`<p class="note" style="margin:4px 0 2px">Por pessoa, quanto custa cada refeição <b>fora do hotel</b>${REFEICOES.length>falta.length?" (as incluídas na diária não entram)":""}:</p>
+        <div class="row" style="gap:6px">${falta.map(([k,n])=>`<label style="font-size:12px">${n} <input type="number" step="0.01" value="${al[k]!=null?al[k]:""}" placeholder="R$" style="width:80px" onchange="setRefeicao('${f.id}','${pl.id}','${k}',this.value)"></label>`).join("")}</div>`
+          :'<p class="note" style="margin:4px 0 2px">A diária já inclui café, almoço e jantar.</p>'}
+        <div class="row" style="gap:6px;margin-top:4px"><label style="font-size:12px">lanches/extras por pessoa/dia <input type="number" step="0.01" value="${extras||""}" placeholder="R$" style="width:80px" onchange="setRefeicao('${f.id}','${pl.id}','extras',this.value)"></label></div>
+        <p class="note" style="margin:2px 0">Alimentação (${dias} dia(s) × ${pes} pessoa(s)): <b>${fmt(custoAlimentacao(pl,f))}</b>${custoAlimentacao(pl,f)?"":" — preencha os valores acima"}</p>`;})()}
       <h4>Passeios e outros</h4>
       <div class="row">
         <input id="itPlNome_${pl.id}" placeholder="Ex.: Thermas, ingresso" style="flex:1;min-width:120px">
@@ -3580,6 +3641,10 @@ let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=f
 function carregarSync(){try{return JSON.parse(localStorage.getItem(KEY_SYNC)||"{}");}catch(e){return{};}}
 function gravarSync(){try{localStorage.setItem(KEY_SYNC,JSON.stringify(sync));}catch(e){}}
 const syncAtivo=()=>!!(sync.refreshToken&&sync.chave);
+// "base": como os dados estavam na última sincronização bem-sucedida deste aparelho (para a junção em 3 vias)
+const KEY_BASE=KEY+"__base";
+function lerBase(){try{const t=localStorage.getItem(KEY_BASE);return t?JSON.parse(t):null;}catch(e){return null;}}
+function gravarBase(obj){try{localStorage.setItem(KEY_BASE,JSON.stringify(obj));}catch(e){}}
 function marcarPendente(){if(!syncAtivo())return;sync.pendente=true;gravarSync();clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),2500);}
 
 // ---- login (API REST do Firebase Auth) ----
@@ -3616,7 +3681,7 @@ async function contaReenviar(){try{await fbAuth("accounts:sendOobCode",{requestT
 async function contaJaConfirmei(){try{await fbToken(true);if(!emailVerificado())alert("Ainda não aparece como confirmado. Abra o link do e-mail e tente de novo.");render();}catch(e){alert(e.message);}}
 async function contaEsqueci(){const email=(document.getElementById("cxEmail").value||"").trim();if(!email){alert("Digite o e-mail primeiro.");return;}
   try{await fbAuth("accounts:sendOobCode",{requestType:"PASSWORD_RESET",email});alert("Se existir conta para "+email+", chegou um e-mail para criar uma nova senha.");}catch(e){alert(e.message);}}
-function contaSair(){if(!confirm("Sair da conta neste aparelho? Os dados continuam salvos aqui; só param de sincronizar."))return;sync={};gravarSync();statusSync("","");render();}
+function contaSair(){if(!confirm("Sair da conta neste aparelho? Os dados continuam salvos aqui; só param de sincronizar."))return;sync={};gravarSync();try{localStorage.removeItem(KEY_BASE);}catch(e){}statusSync("","");render();}
 
 // ---- criptografia (Web Crypto, no aparelho) ----
 function b64de(u8){let s="";for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s);}
@@ -3687,16 +3752,20 @@ async function sincronizar(manual){
         const rem=await fsLer();
         if(rem&&rem.versao!==sync.versao){
           const remoto=migrarEstado(await decifrar(rem));
-          state=migrarEstado(mesclarEstados(state,remoto));reaplicarRenomes();salvarLocal();
+          const base=sync.versao!=null?lerBase():null; // aparelho novo nesta conta: sem base, junção simples
+          state=migrarEstado(mesclarEstados(state,remoto,base));reaplicarRenomes();salvarLocal();
           sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
+          if(!tinhaPendente)gravarBase(remoto);
         }
         if(rem&&!tinhaPendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
-        const d=await cifrar(state);d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
+        const enviado=JSON.stringify(state);
+        const d=await cifrar(JSON.parse(enviado));d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
         if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
         // 3 tentativas com a checagem; na 4ª (logo depois de baixar e juntar de novo) grava direto
         const w=await fsGravar(d,rem&&rem.updateTime,t===3&&!!rem);
         if(w.conflito){ultimoConflito=w.detalhe;continue;} // outro aparelho gravou no meio: baixa de novo e junta
-        sync.versao=d.versao;sync.pendente=false;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();statusSync("ok");return;
+        sync.versao=d.versao;sync.pendente=JSON.stringify(state)!==enviado;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();gravarBase(JSON.parse(enviado));statusSync("ok");
+        if(sync.pendente){clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),1500);}return;
       }
       throw new Error("Não consegui gravar na nuvem (resposta do Firebase: "+ultimoConflito+"). Tente de novo; se repetir, mande um print.");
     }catch(e){statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
