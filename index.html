@@ -372,20 +372,27 @@ function save(){
   document.getElementById("savestate").textContent="Salvando…";
   saveT=setTimeout(()=>{
     saveT=null;
-    try{absorverOutraAba();gravarLS();backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
+    try{absorverOutraAba();gravarLS(true);backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
     catch(e){document.getElementById("savestate").textContent="Não foi possível salvar";}
     marcarPendente();
   },400);
 }
 // se o app for fechado/escondido nesses 400 ms, grava na hora (no iPhone o app pode ser encerrado logo)
 function salvarJa(){if(!saveT)return;clearTimeout(saveT);saveT=null;
-  try{absorverOutraAba();gravarLS();backupRotativo();}catch(e){}marcarPendente();if(typeof sincronizar==="function")sincronizar();}
+  try{absorverOutraAba();gravarLS(true);backupRotativo();}catch(e){}marcarPendente();if(typeof sincronizar==="function")sincronizar();}
 if(typeof window!=="undefined"&&window.addEventListener){window.addEventListener("pagehide",salvarJa);
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")salvarJa();});}
 // grava no aparelho sem marcar como alteração do usuário (usado ao receber dados da sincronização)
 function salvarLocal(){try{gravarLS();backupRotativo();}catch(e){}}
-function gravarLS(){
+// carimbo por mês: cada mês que o USUÁRIO alterou ganha _em = agora (usado na junção quando o mesmo
+// mês foi mexido em dois aparelhos). Só nas gravações de edição (save/salvarJa), não ao receber da nuvem.
+function carimbarMeses(){
+  let ant={};try{(JSON.parse(lsConhecido||"{}").meses||[]).forEach(m=>{const c={...m};delete c._em;ant[m.ym]=JSON.stringify(c);});}catch(e){}
+  const agora=Date.now();(state.meses||[]).forEach(m=>{const c={...m};delete c._em;if(ant[m.ym]!==JSON.stringify(c))m._em=agora;});
+}
+function gravarLS(edicao){
   if(janelaVelha())return;
+  if(edicao)carimbarMeses();
   const t=JSON.stringify(state);localStorage.setItem(KEY,t);lsConhecido=t;registrar("salvo");}
 // Cada janela grava em KEY+"__app" a versão do código que está rodando. Se outra janela abriu uma
 // versão MAIS NOVA, esta (velha) para de gravar no aparelho e recarrega — era assim que uma janela
@@ -468,7 +475,7 @@ function mesclarEstados(a,b,base,opc){
   const obj=x=>x&&typeof x==="object"&&!Array.isArray(x);
   const chave=x=>obj(x)?(x.id!=null?x.id:(x.ym!=null?x.ym:null)):null;
   const temRegistros=v=>Array.isArray(v)&&v.length>0&&v.every(e=>chave(e)!=null);
-  function m(x,y,z,path){
+  function m(x,y,z,path,av){if(av===undefined)av=aVence;
     if(iguais(x,y))return x;
     // regra das 3 vias (só um lado mudou em relação à base → vale esse lado). NÃO vale para listas de
     // registros nem para objetos que as contêm: lá a junção é item a item, senão um lado com dados
@@ -482,24 +489,26 @@ function mesclarEstados(a,b,base,opc){
         const mz=new Map(zArr.filter(e=>chave(e)!=null).map(e=>[String(chave(e)),e]));
         const ordem=[],mapa=new Map();
         const add=(e,lado)=>{const k=String(chave(e));if(apagado(k))return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
-        (aVence?x:y).forEach(e=>add(e,aVence?"x":"y"));(aVence?y:x).forEach(e=>add(e,aVence?"y":"x"));
+        (av?x:y).forEach(e=>add(e,av?"x":"y"));(av?y:x).forEach(e=>add(e,av?"y":"x"));
         const out=[];
         ordem.forEach(k=>{const v=mapa.get(k),zb=mz.has(k)?mz.get(k):NADA;
-          if(v.x&&v.y){out.push(m(v.x,v.y,zb,path+"/"+k));return;}
+          if(v.x&&v.y){ // registro com carimbo próprio (_em, ex.: meses): conflito decidido pela edição DELE, não do app todo
+            const avR=(v.x._em||v.y._em)?(+v.x._em||0)>=(+v.y._em||0):av;
+            out.push(m(v.x,v.y,zb,path+"/"+k,avR));return;}
           // só um lado tem: fica. Sumir de um lado sem marcador em _apagados NÃO é exclusão — uma janela
           // ou aparelho com dados velhos (que nunca teve o registro) não pode apagar um mês novo.
           // Exclusões de verdade passam por marcarApagado() e já foram barradas no add() acima.
           out.push(v.x||v.y);});
         return out;
       }
-      return aVence?x:y;
+      return av?x:y;
     }
     if(obj(x)&&obj(y)){
       const zo=obj(z)?z:null,o={};
       new Set([...Object.keys(x),...Object.keys(y)]).forEach(k=>{
         const p=path+"/"+k;if(apagado(p)||k==="_apagados")return;
         const zk=zo&&(k in zo)?zo[k]:NADA;
-        if(k in x&&k in y){o[k]=m(x[k],y[k],zk,p);return;}
+        if(k in x&&k in y){o[k]=m(x[k],y[k],zk,p,av);return;}
         const v=k in x?x[k]:y[k];
         if(zk!==NADA&&iguais(v,zk)&&!temRegistros(v))return; // o outro lado removeu esta chave e este não mexeu (lista de registros: só com marcador)
         o[k]=v;
@@ -507,7 +516,7 @@ function mesclarEstados(a,b,base,opc){
       return o;
     }
     {const r=tresVias();if(r)return r.v;}
-    return aVence?x:y;
+    return av?x:y;
   }
   const r=m(a,b,base?base:NADA,"");
   const limite=Date.now()-180*86400000; // esquece exclusões com mais de 6 meses
@@ -3774,7 +3783,7 @@ const FB_DOC="casas/principal";
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
 const APP_VERSAO=4;
-const APP_VERSAO_TXT="2026.10.02-4";
+const APP_VERSAO_TXT="2026.10.02-5";
 marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
