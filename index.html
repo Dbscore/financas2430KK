@@ -309,10 +309,13 @@ function migrarEstado(oIn){
   return o;
 }
 let avisoCorrompido=null; // setado se o load() precisou recuperar de um JSON corrompido
+// lsConhecido: o texto salvo no aparelho que ESTA janela conhece (leu ou gravou por último). Se o
+// que está lá for diferente, outra janela/aba do app gravou no meio — ver absorverOutraAba().
+let lsConhecido=null;
 let state=load();
 function load(){
   try{
-    const s=localStorage.getItem(KEY);
+    const s=localStorage.getItem(KEY);lsConhecido=s;
     if(!s)return JSON.parse(JSON.stringify(DEFAULT));
     let parsed;
     try{parsed=JSON.parse(s);}
@@ -367,18 +370,40 @@ function save(){
   document.getElementById("savestate").textContent="Salvando…";
   saveT=setTimeout(()=>{
     saveT=null;
-    try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
+    try{absorverOutraAba();gravarLS();backupRotativo();document.getElementById("savestate").textContent="Salvo neste aparelho";}
     catch(e){document.getElementById("savestate").textContent="Não foi possível salvar";}
     marcarPendente();
   },400);
 }
 // se o app for fechado/escondido nesses 400 ms, grava na hora (no iPhone o app pode ser encerrado logo)
 function salvarJa(){if(!saveT)return;clearTimeout(saveT);saveT=null;
-  try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();}catch(e){}marcarPendente();if(typeof sincronizar==="function")sincronizar();}
+  try{absorverOutraAba();gravarLS();backupRotativo();}catch(e){}marcarPendente();if(typeof sincronizar==="function")sincronizar();}
 if(typeof window!=="undefined"&&window.addEventListener){window.addEventListener("pagehide",salvarJa);
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")salvarJa();});}
 // grava no aparelho sem marcar como alteração do usuário (usado ao receber dados da sincronização)
-function salvarLocal(){try{localStorage.setItem(KEY,JSON.stringify(state));backupRotativo();}catch(e){}}
+function salvarLocal(){try{gravarLS();backupRotativo();}catch(e){}}
+function gravarLS(){const t=JSON.stringify(state);localStorage.setItem(KEY,t);lsConhecido=t;}
+// Várias janelas do app abertas no mesmo navegador (app instalado + aba, duas abas) dividem o mesmo
+// armazenamento, mas cada uma tem o seu "state" na memória. Sem isto, uma janela aberta antes de uma
+// importação continuava com os dados velhos e, ao salvar ou sincronizar, gravava-os por cima.
+// Aqui, se outra janela gravou desde a última vez que esta leu/gravou, junta em 3 vias: base = o que
+// esta janela conhecia; vale o que cada uma mudou em relação a isso. Devolve true se absorveu algo.
+function absorverOutraAba(){
+  let atual;try{atual=localStorage.getItem(KEY);}catch(e){return false;}
+  if(atual==null||atual===lsConhecido)return false;
+  try{
+    const outro=migrarEstado(JSON.parse(atual));
+    const base=lsConhecido?migrarEstado(JSON.parse(lsConhecido)):null;
+    state=migrarEstado(mesclarEstados(state,outro,base,base?null:{bVence:true}));
+    if(typeof reaplicarRenomes==="function")reaplicarRenomes();
+  }catch(e){return false;}
+  lsConhecido=atual;
+  if(typeof recarregarSync==="function")recarregarSync();
+  return true;
+}
+if(typeof window!=="undefined"&&window.addEventListener)window.addEventListener("storage",e=>{
+  if(e.key===KEY){if(absorverOutraAba()&&typeof render==="function")(typeof renderSeguro==="function"?renderSeguro:render)();}
+  else if(e.key===KEY+"__sync"&&typeof recarregarSync==="function")recarregarSync();});
 
 // ---- Exclusões registradas: sem isso, ao juntar dados de dois aparelhos o que foi apagado num
 // deles "voltaria" do outro. Guarda {chave: quando}. Registros de lista usam o id (ou ym, nos
@@ -3700,12 +3725,15 @@ const FB_DOC="casas/principal";
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
 const APP_VERSAO=3;
-const APP_VERSAO_TXT="2026.10.01-3";
+const APP_VERSAO_TXT="2026.10.01-4";
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
 let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=false;
 function carregarSync(){try{return JSON.parse(localStorage.getItem(KEY_SYNC)||"{}");}catch(e){return{};}}
 function gravarSync(){try{localStorage.setItem(KEY_SYNC,JSON.stringify(sync));}catch(e){}}
+// outra janela do app pode ter sincronizado: adota o que ela gravou (versão, base), sem perder
+// a pendência desta janela
+function recarregarSync(){const g=carregarSync();if(!g||!g.refreshToken)return;const pend=!!sync.pendente;sync=g;if(pend)sync.pendente=true;}
 const syncAtivo=()=>!!(sync.refreshToken&&sync.chave);
 // "base": como os dados estavam na última sincronização bem-sucedida deste aparelho (para a junção em 3 vias)
 const KEY_BASE=KEY+"__base";
@@ -3814,6 +3842,7 @@ async function sincronizar(manual){
       statusSync("sincronizando");
       let ultimoConflito="";
       for(let t=0;t<4;t++){
+        absorverOutraAba(); // outra janela pode ter importado/sincronizado enquanto esta estava parada
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
         if(rem&&rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app de novo (no computador, recarregue a página) para atualizar — até lá este aparelho não envia nada.");
