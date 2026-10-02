@@ -286,7 +286,7 @@ function migrarEstado(oIn){
   if(!o.aloc||typeof o.aloc!=="object")o.aloc={montante:0,itens:{}};
   if(!o.aloc.itens)o.aloc.itens={};
   if(!Array.isArray(o.aportes))o.aportes=[];
-  o.meses.forEach(mm=>{if(!mm.orcado)mm.orcado={};});
+  o.meses.forEach(mm=>{if(!mm.orcado)mm.orcado={};delete mm.rascunho;}); // rascunho não existe mais: todo mês conta nas análises
   o._pagosInit=1; // (a migração antiga que marcava jan–jul/2026 como pagas foi removida: valia só para a planilha original)
   if(!o.tipos)o.tipos={...FIXO_DEFAULT};
   if(!o.folha)o.folha=JSON.parse(JSON.stringify(DEFAULT.folha));
@@ -557,7 +557,8 @@ const lbl=ym=>{const[y,m]=ym.split("-");return NM[+m-1]+"/"+y.slice(2);};
 const uid=()=>Math.random().toString(36).slice(2,9);
 const mi=ym=>state.meses.findIndex(x=>x.ym===ym);
 const meses=()=>[...state.meses].sort((a,b)=>a.ym.localeCompare(b.ym));
-const mesesA=()=>{const a=meses().filter(m=>!m.rascunho);return a.length?a:meses();};
+// todos os meses entram nas análises (o antigo "rascunho" foi removido em 2026-10-02 — migrarEstado apaga o campo)
+const mesesA=meses;
 const totalContas=m=>Object.values(m.contas).reduce((s,v)=>s+(+v||0),0);
 const r2=v=>Math.round(((+v||0)+Number.EPSILON)*100)/100;
 const renda=m=>r2((+m.salario||0)+(+m.extra||0));
@@ -880,8 +881,6 @@ function vVisao(){
   const agNovo=novos.reduce((s,f)=>s+f.valor,0);
   const envelope=rendaPrev-fixPrev-alvoS-agNovo;
   const margem=envelope-varPrev;
-  const ras=all[all.length-1]&&all[all.length-1].rascunho?all[all.length-1]:null;
-  const prevTot=Math.max(holt(ms.map(totalContas)),0)+agNovo;
   return `
   <div class="card"><div class="row">
     <span>Período:</span>
@@ -920,11 +919,6 @@ function vVisao(){
       :`<p class="note" style="margin-top:8px"><span class="pill rose">⚠</span> Para sobrar ${fmt0(alvoS)}, é preciso gastar <b class="rose">${fmt0(-margem)}</b> a menos que seu padrão de variáveis — mire as categorias variáveis nas metas abaixo.</p>`}
   </div>
 
-  ${ras?`<div class="card" style="border-color:var(--amber)"><h3>⏳ Mês em andamento — ${lbl(ras.ym)} (rascunho)</h3>
-    <div class="bar"><div style="width:${clamp(totalContas(ras)/prevTot*100,0,100)}%;background:${totalContas(ras)>prevTot?"#e11d48":"#d97706"}"></div></div>
-    <p class="note">Contas lançadas: <b>${fmt0(totalContas(ras))}</b> de ~${fmt0(prevTot)} previstos (${Math.round(totalContas(ras)/prevTot*100)}%).
-    Se fechar no previsto, a sobra fica em <b class="${(renda(ras)||rendaPrev)-prevTot>=0?'teal':'rose'}">${fmt0((renda(ras)||rendaPrev)-prevTot)}</b>.${(()=>{const P=state.pagos&&state.pagos[ras.ym];if(!P)return"";const its=Object.entries(ras.contas).filter(([,v])=>+v>0);const pg=its.filter(([n])=>P[n]).length;return pg?" Pagamentos: <b>"+pg+" de "+its.length+" contas pagas</b> (aba Status do mês).":"";})()} Marque "incluir nas análises" ao fechar o mês.</p></div>`:""}
-
   ${sc?`<div class="card"><div class="flexbet"><h3>Score de saúde financeira — ${lbl(M.ym)}</h3>
     ${scAnt?`<span class="pill ${sc.total>=scAnt.total?"teal":"rose"}">${sc.total>=scAnt.total?"▲":"▼"} ${Math.abs(sc.total-scAnt.total)} vs ${lbl(ms[idx-1].ym)}</span>`:""}</div>
     <div class="row" style="align-items:flex-end;gap:16px">
@@ -940,7 +934,7 @@ function vVisao(){
         <tr><td>Contas fixas</td><td class="n">${fmt(d.fixos)}</td><td class="n">${pc(d.fixos)} → ${sc.p2}/30</td></tr>
         <tr><td>Dívidas${d.contasDiv.length?": "+d.contasDiv.map(([n])=>esc(n)).join(", "):" (nenhuma conta)"}</td><td class="n">${fmt(d.dividas)}</td><td class="n">${pc(d.dividas)} → ${sc.p3}/20</td></tr>
         <tr><td>Meses com sobra positiva: ${d.janela.map(([y,v])=>lbl(y)+" "+(v>0?"✔":"✖")).join(" · ")}</td><td></td><td class="n">${d.pos}/${d.janela.length} → ${sc.p4}/10</td></tr></table>
-        <p class="note">Sobra vale cheio a partir de 20% da renda · fixos penalizam acima de 50% (zeram em 80%) · dívidas acima de 15% (zeram em 40%). Conta como dívida o que está na categoria "Dívidas e cartões" ou tem parcelamento configurado — ajuste na aba Categorias ou no ⏳ de Editar dados. Meses em rascunho não entram.</p>`;})()}
+        <p class="note">Sobra vale cheio a partir de 20% da renda · fixos penalizam acima de 50% (zeram em 80%) · dívidas acima de 15% (zeram em 40%). Conta como dívida o que está na categoria "Dívidas e cartões" ou tem parcelamento configurado — ajuste na aba Categorias ou no ⏳ de Editar dados.</p>`;})()}
     </details></div>`:""}
 
   <div class="card"><h3>Metas por categoria — ${lbl(M.ym)}</h3>
@@ -1072,7 +1066,7 @@ function vSobras(){
 
   return `
   <div class="card"><div class="row">
-    <span>Mês:</span><select onchange="sobSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===sobSel?"selected":""}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+    <span>Mês:</span><select onchange="sobSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===sobSel?"selected":""}>${lbl(x.ym)}</option>`).join("")}</select>
     <span class="note">Caixa real do mês: o que entrou, as contas pagas e os gastos do dia a dia lançados aqui (ou pelo botão +).</span>
   </div></div>
 
@@ -1325,7 +1319,7 @@ function vPrev(){
       <select id="prevAdd">${opts.map(k=>`<option value="${k}">${prevNome(k)}</option>`).join("")}</select>
       <button class="btn" onclick="addPrev()">+ Adicionar série</button>
     </div>
-    <p class="note">Combine até 4 séries: total, sobra, só as fixas, só as variáveis, ou contas individuais. Três modelos leves: <b>média móvel 3m</b> (contas estáveis), <b>suavização exponencial</b> (mais peso nos meses recentes — geralmente a melhor) e <b>tendência linear</b> (direção). Meses em rascunho ficam de fora.</p></div>
+    <p class="note">Combine até 4 séries: total, sobra, só as fixas, só as variáveis, ou contas individuais. Três modelos leves: <b>média móvel 3m</b> (contas estáveis), <b>suavização exponencial</b> (mais peso nos meses recentes — geralmente a melhor) e <b>tendência linear</b> (direção).</p></div>
 
   <div class="card"><h3>Próximo mês — pelos três modelos</h3>
   <table><tr><th>Série</th><th class="n">Último</th><th class="n">Média móvel 3m</th><th class="n">Suavização exp.</th><th class="n">Tendência linear</th><th class="n">Direção</th></tr>
@@ -1678,7 +1672,7 @@ function vStatus(){
   const r=renda(m);
   const pendFixas=itens.filter(x=>!x.pago&&tipoOf(x.n)==="Fixo");
   const maior=itens.filter(x=>!x.pago).sort((a,b)=>b.v-a.v)[0];
-  const hist=all.filter(x=>!x.rascunho&&x.ym!==pagSel).slice(-3);
+  const hist=all.filter(x=>x.ym!==pagSel).slice(-3);
   const medHist=hist.length?hist.reduce((s,x)=>s+totalContas(x),0)/hist.length:0;
   const pill=(c,t)=>`<p class="note" style="margin-top:6px"><span class="pill ${c==='teal'?'teal':'rose'}" style="${c==='amber'?'background:#fef3c7;color:#92400e':''}">${c==='teal'?'✔':'⚠'}</span> ${t}</p>`;
   const alerts=[];
@@ -1693,7 +1687,7 @@ function vStatus(){
   if(nProv)alerts.push(["amber",nProv+" valor(es) ainda <b>provisório(s)</b> (estimados do mês anterior) — o total pode mudar quando os valores reais chegarem. Ajuste na aba Editar dados."]);
   return `
   <div class="card"><div class="row">
-    <span>Mês:</span><select onchange="pagSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===pagSel?"selected":""}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+    <span>Mês:</span><select onchange="pagSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===pagSel?"selected":""}>${lbl(x.ym)}</option>`).join("")}</select>
     <button class="btn" onclick="marcarTodos('${pagSel}',true)">✔ marcar todas pagas</button>
     <button class="btn" onclick="marcarTodos('${pagSel}',false)">↺ limpar</button>
   </div></div>
@@ -1888,7 +1882,7 @@ function vFolha(){
     <div class="row" style="margin-top:12px">
       <label>Crédito VA no cartão <input type="number" step="0.01" value="${F.vaCred}" onchange="state.folha.vaCred=+this.value;save()"></label>
       <span>Aplicar em:</span>
-      <select id="folhaMes">${[...ms].reverse().map(m=>`<option value="${m.ym}">${lbl(m.ym)}${m.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+      <select id="folhaMes">${[...ms].reverse().map(m=>`<option value="${m.ym}">${lbl(m.ym)}</option>`).join("")}</select>
       <button class="btn primary" onclick="aplicarFolha()">Aplicar líquido ao mês →</button>
     </div>
     <p class="note">Ao aplicar, o <b>salário líquido</b> do mês vira ${fmt0(R.liq)} e o <b>VA</b> vira ${fmt0(F.vaCred)} — refletindo em toda a visão geral, análises, balança e simulações. Extras (PLR, reembolsos) continuam no campo "Extra" da aba Editar.</p></div>
@@ -2001,7 +1995,7 @@ const METODOS={ult:"Último mês",med3:"Mediana 3m",avg3:"Média 3m",max:"Maior 
 function metodoDe(n){return (state.provMetodo&&state.provMetodo[n])||"ult";}
 function setMetodo(n,mt){if(!state.provMetodo)state.provMetodo={};state.provMetodo[n]=mt;save();render();}
 // série da conta ANTES do mês alvo (não usa o próprio mês nem meses futuros)
-function serieAntes(n,ym){return meses().filter(x=>x.ym<ym&&!x.rascunho).map(x=>+x.contas[n]||0);}
+function serieAntes(n,ym){return meses().filter(x=>x.ym<ym).map(x=>+x.contas[n]||0);}
 function estimaConta(n,ym,mt){
   mt=mt||metodoDe(n);
   const serie=serieAntes(n,ym).filter(v=>v>0);
@@ -2182,17 +2176,10 @@ function vEditar(){
   const contas=Object.entries(m.contas);
   return `
   <div class="card"><div class="row">
-    <span>Mês:</span><select onchange="edSel=+this.value;edYm=null;render()">${ms.map((x,j)=>`<option value="${j}" ${j===edSel?'selected':''}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+    <span>Mês:</span><select onchange="edSel=+this.value;edYm=null;render()">${ms.map((x,j)=>`<option value="${j}" ${j===edSel?'selected':''}>${lbl(x.ym)}</option>`).join("")}</select>
     <button class="btn primary" onclick="novoMes(true)">+ Novo mês copiando valores</button>
     <button class="btn" onclick="novoMes(false)">+ Novo mês zerado</button>
     <button class="btn danger" onclick="delMes(${IX})">Excluir mês</button>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <input type="checkbox" style="width:auto" ${m.rascunho?"":"checked"} onchange="incluirNasAnalises('${m.ym}',this.checked)">
-      Incluir este mês nas análises (gráficos, médias, previsão e simulação)
-    </label>
-    ${m.rascunho?'<span class="pill" style="background:#fef3c7;color:#92400e">rascunho — fora das análises</span>':'<span class="pill teal">contando nas análises</span>'}
   </div>
   <div class="row" style="margin-top:8px">
     <button class="btn" onclick="puxarTodasPendentes(${IX})" title="Preenche só as contas ainda vazias, cada uma pela sua regra de estimativa, marcando como provisórias. Não altera contas que já têm valor.">↩ Estimar contas vazias (pela regra de cada uma)</button>
@@ -2332,22 +2319,14 @@ function criarMes(ym){
   const contas={},prov={},orcado={};
   if(ant)Object.entries(ant.contas).forEach(([k,v])=>{if(+v>0){contas[k]=+v;prov[k]=true;orcado[k]=+v;}});
   const sal=+state.folha.bruto>0?r2(folhaCalc().liq):(ant?ant.salario:0);
-  const m={ym,salario:sal,extra:0,va:vaACT(ym)||(ant?ant.va:0),rascunho:true,contas,prov,orcado};
+  const m={ym,salario:sal,extra:0,va:vaACT(ym)||(ant?ant.va:0),contas,prov,orcado};
   marcarRevivido(ym);state.meses.push(m);aplicarAportesDoMes(ym);return m;
-}
-function incluirNasAnalises(ym,sim){
-  const m=state.meses.find(x=>x.ym===ym);if(!m)return;
-  const ultAntes=(mesesA().slice(-1)[0]||{}).ym;
-  m.rascunho=!sim;
-  // a Visão geral estava fixada no mês mais recente → acompanha o mês que acabou de entrar
-  if(sim&&state.visSel&&state.visSel!=="todos"&&state.visSel===ultAntes&&ym>ultAntes)state.visSel=ym;
-  save();render();
 }
 function novoMes(copiar){
   const ms=meses();const last=ms[ms.length-1];
   if(!last){ // primeiro mês do painel: nasce zerado, mês corrente
     const hoje=new Date();const ym=hoje.getFullYear()+"-"+String(hoje.getMonth()+1).padStart(2,"0");
-    marcarRevivido(ym);state.meses.push({ym,salario:0,extra:0,va:0,rascunho:true,contas:{},prov:{},orcado:{}});
+    marcarRevivido(ym);state.meses.push({ym,salario:0,extra:0,va:0,contas:{},prov:{},orcado:{}});
     edSel=0;edYm=ym;save();render();return;
   }
   const d=new Date(+last.ym.slice(0,4),+last.ym.slice(5),1);
@@ -2359,7 +2338,7 @@ function novoMes(copiar){
   const ag=futurosEm(ym);ag.forEach(f=>{if(!(f.nome in contas)||!contas[f.nome])contas[f.nome]=f.valor;});
   const vaNovo=vaACT(ym)||last.va; 
   const prov={},orcado={};if(copiar)Object.keys(contas).forEach(k=>{if(+contas[k]>0){prov[k]=true;orcado[k]=+contas[k];}}); // valores copiados = provisórios e viram orçado
-  marcarRevivido(ym);state.meses.push({ym,salario:last.salario,extra:copiar?last.extra:0,va:vaNovo,rascunho:true,contas,prov,orcado});
+  marcarRevivido(ym);state.meses.push({ym,salario:last.salario,extra:copiar?last.extra:0,va:vaNovo,contas,prov,orcado});
   const aps=aplicarAportesDoMes(ym);
   edSel=meses().length-1;edYm=ym;save();render();
   const avisos=[];
@@ -2501,7 +2480,7 @@ function vOrcado(){
       <td>${tag}</td></tr>`;};
 
   return `
-  <div class="card"><div class="row"><span>Mês:</span><select onchange="orcSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===orcSel?"selected":""}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+  <div class="card"><div class="row"><span>Mês:</span><select onchange="orcSel=this.value;render()">${[...all].reverse().map(x=>`<option value="${x.ym}" ${x.ym===orcSel?"selected":""}>${lbl(x.ym)}</option>`).join("")}</select>
     <span class="note">Orçado = o valor que você previu (provisório congelado). Realizado = o valor real confirmado.</span></div></div>
 
   <div class="grid g4">
@@ -3794,7 +3773,7 @@ const FB_DOC="casas/principal";
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
 const APP_VERSAO=4;
-const APP_VERSAO_TXT="2026.10.02-7";
+const APP_VERSAO_TXT="2026.10.02-8";
 marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
@@ -3932,6 +3911,17 @@ async function contaSenhaFamilia(){
   }catch(e){statusSync("erro",e.message);alert(e.message);}
 }
 
+// resumo do que a sincronização mudou neste aparelho (para o Diagnóstico): meses e campos
+function oQueMudou(a,b){
+  const out=[],ma={},mb={};(a.meses||[]).forEach(m=>ma[m.ym]=m);(b.meses||[]).forEach(m=>mb[m.ym]=m);
+  new Set([...Object.keys(ma),...Object.keys(mb)]).forEach(ym=>{const x=ma[ym],y=mb[ym];
+    if(!x){out.push(lbl(ym)+" chegou");return;}if(!y){out.push(lbl(ym)+" saiu");return;}
+    const cs=["salario","extra","va"].filter(k=>!iguais(x[k],y[k]));
+    const ct=Object.keys({...x.contas,...y.contas}).filter(k=>!iguais((x.contas||{})[k],(y.contas||{})[k]));
+    if(cs.length||ct.length)out.push(lbl(ym)+": "+[...cs,...ct.slice(0,3)].join(", ")+(ct.length>3?" +"+(ct.length-3):""));});
+  ["folha","movs","ferias","pagos","metasCurto","futuros","visSel","sobraAlvo"].forEach(k=>{if(!iguais(a[k],b[k]))out.push(k);});
+  return out.slice(0,6).join("; ");
+}
 // compara os dados em si (sem carimbo de hora e marcadores de exclusão, que a junção recalcula)
 function mesmoConteudo(x,y){const f=o=>{const c={...o};delete c._atualizadoEm;delete c._apagados;return c;};return iguais(f(x),f(y));}
 // ---- o ciclo: baixa o que há de novo, junta, e sobe se houver mudança local ----
@@ -3956,8 +3946,10 @@ async function sincronizar(manual){
           const base=sync.versao!=null?lerBase():null;
           // sem base (aparelho novo nesta conta ou recém-atualizado): a nuvem vence os conflitos;
           // deste aparelho só entram registros novos (gastos, meses) que a nuvem ainda não tem
+          const antesJunta=JSON.parse(JSON.stringify(state));
           state=migrarEstado(mesclarEstados(state,remoto,base,base?null:{bVence:true}));reaplicarRenomes();salvarLocal();
-          registrar("recebeu da nuvem (v"+rem.versao+", enviado por "+(remoto._ultimoEnvio?nomeDe(remoto,remoto._ultimoEnvio.id):(rem.por||"?"))+(base?"":", sem base")+")");
+          const mudou=oQueMudou(antesJunta,state);
+          registrar("recebeu da nuvem (v"+rem.versao+", enviado por "+(remoto._ultimoEnvio?nomeDe(remoto,remoto._ultimoEnvio.id):(rem.por||"?"))+(base?"":", sem base")+")"+(mudou?" — mudou aqui: "+mudou:" — nada mudou aqui"));
           sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
           if(!tinhaPendente)gravarBase(remoto);
           if(!mesmoConteudo(state,remoto)){sync.pendente=true;gravarSync();} // a junção trouxe algo daqui que a nuvem não tem
