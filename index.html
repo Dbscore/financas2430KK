@@ -2189,7 +2189,7 @@ function vEditar(){
     <label>Salário líquido <input type="number" step="0.01" value="${m.salario}" onchange="state.meses[${IX}].salario=+this.value;save();render()"></label>
     <label>Extra/benefícios <input type="number" step="0.01" value="${m.extra}" onchange="state.meses[${IX}].extra=+this.value;save();render()"></label>
     <label>Vale alimentação <input type="number" step="0.01" value="${m.va}" onchange="state.meses[${IX}].va=+this.value;save();render()"></label>
-  </div><p class="note">Renda considerada = salário + extra (VA fica fora, como na sua planilha). Renda: <b>${fmt(renda(m))}</b> · Contas: <b>${fmt(totalContas(m))}</b> · Sobra: <b class="${sobra(m)>=0?'teal':'rose'}">${fmt(sobra(m))}</b></p></div>
+  </div><p class="note">Renda considerada = salário + extra (VA fica fora, como na sua planilha). Renda: <b>${fmt(renda(m))}</b> · Contas: <b>${fmt(totalContas(m))}</b>${(()=>{const a=avulsosDoMes(m.ym);return (a.gasto?` · Gastos avulsos: <b>${fmt(a.gasto)}</b>`:"")+(a.renda?` · Recebimentos avulsos: <b>+${fmt(a.renda)}</b>`:"");})()} · Sobra: <b class="${sobra(m)>=0?'teal':'rose'}">${fmt(sobra(m))}</b>${(()=>{const a=avulsosDoMes(m.ym);return a.gasto||a.renda?` <span class="note" style="margin:0">(lista em Mês → Gerenciar sobra)</span>`:"";})()}</p></div>
   ${(()=>{const sel=Object.keys(calcSel).filter(k=>calcSel[k]);if(!sel.length)return"";
     const linhas=sel.map(k=>({n:k,v:+m.contas[k]||0}));
     const soma=linhas.reduce((s,x)=>s+x.v,0);
@@ -3772,7 +3772,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.10.02-9";
+const APP_VERSAO_TXT="2026.10.02-11";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -3881,7 +3881,7 @@ async function decifrar(d,chave){
 const fsUrl=()=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/"+FB_DOC;
 function erroFs(st,j){if(st===403)return"Sem permissão no Firestore: confira as regras (e se o seu e-mail está liberado e confirmado). Se acabou de atualizar as regras, feche e abra o app de novo.";return"Erro "+st+" do Firestore: "+((j.error&&j.error.message)||"");}
 async function fsLer(){
-  const r=await fetch(fsUrl(),{headers:{Authorization:"Bearer "+await fbToken()}});
+  const r=await fetch(fsUrl(),{cache:"no-store",headers:{Authorization:"Bearer "+await fbToken()}});
   if(r.status===404)return null;
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(erroFs(r.status,j));
   const f=j.fields||{},sv=k=>f[k]&&f[k].stringValue;
@@ -3891,7 +3891,7 @@ async function fsLer(){
 // aparelho com o app antigo (que ainda não recarregou) NÃO consegue mais mandar dados velhos.
 const fsUrlConfig=()=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/casas/config";
 async function fsLerMin(){
-  const r=await fetch(fsUrlConfig(),{headers:{Authorization:"Bearer "+await fbToken()}});
+  const r=await fetch(fsUrlConfig(),{cache:"no-store",headers:{Authorization:"Bearer "+await fbToken()}});
   if(r.status===404)return 0;const j=await r.json().catch(()=>({}));if(!r.ok)return 0;
   return +((j.fields&&j.fields.min&&j.fields.min.integerValue)||0);}
 async function fsSubirMin(){
@@ -3961,6 +3961,11 @@ async function sincronizar(manual){
         absorverOutraAba(); // outra janela pode ter importado/sincronizado enquanto esta estava parada
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
+        // leitura desatualizada (cache): a nuvem nunca "volta" para uma versão menor do que este aparelho já viu.
+        // Nesse caso não junta nem envia nada — era assim que dados velhos sobrescreviam a nuvem.
+        if(rem&&+sync.maxVersao>0&&rem.versao<+sync.maxVersao){registrar("leitura velha da nuvem (v"+rem.versao+" < v"+sync.maxVersao+"): ignorada");
+          throw new Error("A leitura da nuvem veio desatualizada (cache do navegador). Nada foi alterado. Feche e abra o app de novo.");}
+        if(rem){sync.maxVersao=Math.max(+sync.maxVersao||0,rem.versao);gravarSync();}
         if(rem&&rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app de novo (no computador, recarregue a página) para atualizar — até lá este aparelho não envia nada.");
         // 1ª sincronização desta janela: junta com a nuvem mesmo se a versão bate — o que está no
         // aparelho pode ter sido regravado por uma janela antiga sem que o controle de versão saiba
@@ -3985,12 +3990,12 @@ async function sincronizar(manual){
         const enviado=JSON.stringify(state);
         const d=await cifrar(JSON.parse(enviado));d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
         if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
-        // 3 tentativas com a checagem; na 4ª (logo depois de baixar e juntar de novo) grava direto
-        const w=await fsGravar(d,rem&&rem.updateTime,t===3&&!!rem);
+        // até 4 tentativas, todas com a checagem (a antiga 4ª "sem checar" era um remendo para a leitura em cache e sobrescrevia a nuvem)
+        const w=await fsGravar(d,rem&&rem.updateTime,false); // sempre com checagem: nunca grava por cima sem conferir
         if(w.conflito){ultimoConflito=w.detalhe;continue;} // outro aparelho gravou no meio: baixa de novo e junta
         salvarLocal(); // o registro do aparelho também fica gravado aqui
         registrar("enviou para a nuvem (v"+d.versao+")");
-        sync.versao=d.versao;sync.pendente=JSON.stringify(state)!==enviado;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();gravarBase(JSON.parse(enviado));statusSync("ok");
+        sync.versao=d.versao;sync.maxVersao=Math.max(+sync.maxVersao||0,d.versao);sync.pendente=JSON.stringify(state)!==enviado;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();gravarBase(JSON.parse(enviado));statusSync("ok");
         if(sync.pendente){clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),1500);}return;
       }
       throw new Error("Não consegui gravar na nuvem (resposta do Firebase: "+ultimoConflito+"). Tente de novo; se repetir, mande um print.");
@@ -4323,6 +4328,11 @@ function after(){
 if(syncAtivo()&&!(typeof navigator!=="undefined"&&navigator.onLine===false)){esperandoNuvem=true;setTimeout(liberarTela,12000);}
 aplicarTema();aplicarOlho();render();statusSync("");sincronizar();
 </script>
-<script>if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js");</script>
+<script>if("serviceWorker" in navigator&&location.protocol.startsWith("http")){
+  const tinha=!!navigator.serviceWorker.controller;let recarregou=false;
+  navigator.serviceWorker.addEventListener("controllerchange",()=>{if(!tinha||recarregou)return;recarregou=true;
+    try{if(typeof salvarJa==="function")salvarJa();}catch(e){}location.reload();});
+  navigator.serviceWorker.register("sw.js").then(r=>{r.update();
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")r.update().catch(()=>{});});}).catch(()=>{});}</script>
 </body>
 </html>
