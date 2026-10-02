@@ -402,8 +402,10 @@ function iguais(x,y){
   if(Array.isArray(x)){if(x.length!==y.length)return false;for(let i=0;i<x.length;i++)if(!iguais(x[i],y[i]))return false;return true;}
   const kx=Object.keys(x),ky=Object.keys(y);if(kx.length!==ky.length)return false;for(const k of kx)if(!(k in y)||!iguais(x[k],y[k]))return false;return true;
 }
-function mesclarEstados(a,b,base){
-  const aVence=(+a._atualizadoEm||0)>=(+b._atualizadoEm||0);
+function mesclarEstados(a,b,base,opc){
+  // opc.bVence: sem base, quem vence nos conflitos é b (a nuvem) — um aparelho recém-atualizado
+  // não sabe o que mudou nele, então não pode sobrescrever a nuvem com valores possivelmente velhos
+  const aVence=opc&&opc.bVence?false:(+a._atualizadoEm||0)>=(+b._atualizadoEm||0);
   const tomb={...(b._apagados||{}),...(a._apagados||{})};
   Object.keys(b._apagados||{}).forEach(k=>{const x=tomb[k]||0,y=b._apagados[k];tomb[k]=Math.abs(y)>Math.abs(x)?y:x;});
   const apagado=k=>(tomb[k]||0)>0;
@@ -3694,6 +3696,11 @@ function vFerias(){
 // A configuração abaixo NÃO é segredo (identifica o projeto); quem protege são o login e as regras.
 const FB={apiKey:"AIzaSyCXKplg0f0fnN6pVSMJUcQAxEiBipm2fQU",projectId:"financas-app-ca600"};
 const FB_DOC="casas/principal";
+// Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
+// para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
+// dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
+const APP_VERSAO=3;
+const APP_VERSAO_TXT="2026.10.01-3";
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
 let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=false;
@@ -3764,18 +3771,18 @@ async function decifrar(d,chave){
 
 // ---- Firestore (API REST) ----
 const fsUrl=()=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/"+FB_DOC;
-function erroFs(st,j){if(st===403)return"Sem permissão no Firestore: confira as regras e se o seu e-mail está liberado e confirmado.";return"Erro "+st+" do Firestore: "+((j.error&&j.error.message)||"");}
+function erroFs(st,j){if(st===403)return"Sem permissão no Firestore: confira as regras (e se o seu e-mail está liberado e confirmado). Se acabou de atualizar as regras, feche e abra o app de novo.";return"Erro "+st+" do Firestore: "+((j.error&&j.error.message)||"");}
 async function fsLer(){
   const r=await fetch(fsUrl(),{headers:{Authorization:"Bearer "+await fbToken()}});
   if(r.status===404)return null;
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(erroFs(r.status,j));
   const f=j.fields||{},sv=k=>f[k]&&f[k].stringValue;
-  return{cifra:sv("cifra"),iv:sv("iv"),salt:sv("salt"),gz:!!(f.gz&&f.gz.booleanValue),versao:+((f.versao&&f.versao.integerValue)||0),por:sv("por"),em:f.em&&f.em.timestampValue,updateTime:j.updateTime};}
+  return{cifra:sv("cifra"),iv:sv("iv"),salt:sv("salt"),gz:!!(f.gz&&f.gz.booleanValue),versao:+((f.versao&&f.versao.integerValue)||0),v:+((f.v&&f.v.integerValue)||0),por:sv("por"),em:f.em&&f.em.timestampValue,updateTime:j.updateTime};}
 // updateTime: grava só se ninguém gravou depois (concorrência otimista). semCheck: grava direto.
 async function fsGravar(d,updateTime,semCheck){
   const pre=semCheck?"":updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
   const corpo={fields:{cifra:{stringValue:d.cifra},iv:{stringValue:d.iv},salt:{stringValue:d.salt},gz:{booleanValue:d.gz},
-    versao:{integerValue:String(d.versao)},por:{stringValue:sync.email||""},em:{timestampValue:new Date().toISOString()}}};
+    versao:{integerValue:String(d.versao)},v:{integerValue:String(APP_VERSAO)},por:{stringValue:sync.email||""},em:{timestampValue:new Date().toISOString()}}};
   const r=await fetch(fsUrl()+(pre?"?"+pre:""),{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
   const j=await r.json().catch(()=>({}));
   const st=(j.error&&j.error.status)||"";
@@ -3809,10 +3816,13 @@ async function sincronizar(manual){
       for(let t=0;t<4;t++){
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
+        if(rem&&rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app de novo (no computador, recarregue a página) para atualizar — até lá este aparelho não envia nada.");
         if(rem&&rem.versao!==sync.versao){
           const remoto=migrarEstado(await decifrar(rem));
-          const base=sync.versao!=null?lerBase():null; // aparelho novo nesta conta: sem base, junção simples
-          state=migrarEstado(mesclarEstados(state,remoto,base));reaplicarRenomes();salvarLocal();
+          const base=sync.versao!=null?lerBase():null;
+          // sem base (aparelho novo nesta conta ou recém-atualizado): a nuvem vence os conflitos;
+          // deste aparelho só entram registros novos (gastos, meses) que a nuvem ainda não tem
+          state=migrarEstado(mesclarEstados(state,remoto,base,base?null:{bVence:true}));reaplicarRenomes();salvarLocal();
           sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
           if(!tinhaPendente)gravarBase(remoto);
         }
@@ -3872,7 +3882,7 @@ function cardConta(){
       ${syncStatus.tipo==="erro"?lin("<b style='color:#be123c'>⚠ "+syncStatus.msg+"</b>"):""}
       <div class="row" style="margin-top:6px"><button class="btn primary" onclick="sincronizar(true).then(()=>render())">Sincronizar agora</button><button class="btn" onclick="contaSair()">Sair</button></div>`;
   }
-  return `<div class="card" style="border-color:var(--indigo)"><h3>☁️ Conta e sincronização</h3>${corpo}</div>`;
+  return `<div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3 style="margin:0">☁️ Conta e sincronização</h3><span class="note" style="margin:0">versão do app: <b>${APP_VERSAO_TXT}</b></span></div>${corpo}</div>`;
 }
 if(typeof window!=="undefined"&&window.addEventListener){
   window.addEventListener("online",()=>sincronizar());
