@@ -100,6 +100,40 @@
   .folha-lanc input,.folha-lanc select,.folha-lanc input[type=number]{width:100%;margin-top:4px;text-align:left;}
   /* ---------- celular ---------- */
   @media(max-width:700px){
+    /* Editar dados → contas: cada conta em 3 linhas, com o VALOR sempre à vista (antes ficava fora da tela, à direita).
+       Só reposiciona as mesmas células — nada muda nos campos nem no que eles fazem. */
+    .tb-contas>tbody>tr:first-child{display:none;}
+    .tb-contas>tbody>tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:6px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border2);}
+    .tb-contas>tbody>tr>td{border:0;padding:0;min-width:0;}
+    .tb-contas>tbody>tr>td:nth-child(1){grid-area:1/1;}
+    .tb-contas>tbody>tr>td:nth-child(2){grid-area:1/2;font-weight:600;}
+    .tb-contas>tbody>tr>td:nth-child(7){grid-area:1/3;}
+    .tb-contas>tbody>tr>td:nth-child(8){grid-area:1/4;}
+    .tb-contas>tbody>tr>td:nth-child(3){grid-area:2/1/2/3;}
+    .tb-contas>tbody>tr>td:nth-child(4){grid-area:2/3;}
+    .tb-contas>tbody>tr>td:nth-child(5){grid-area:2/4;}
+    .tb-contas>tbody>tr>td:nth-child(6){grid-area:3/1/3/3;}
+    .tb-contas>tbody>tr>td:nth-child(9){grid-area:3/3/3/5;text-align:right;}
+    .tb-contas>tbody>tr>td[colspan]{grid-area:auto/1/auto/-1;}
+    .tb-contas>tbody>tr>td>select{width:100%;}
+    /* Gerenciar sobra → lançamentos: valor e saldo sempre à vista */
+    .tb-lanc>tbody>tr:first-child{display:none;}
+    .tb-lanc>tbody>tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:4px 8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border2);}
+    .tb-lanc>tbody>tr>td{border:0;padding:0;min-width:0;}
+    .tb-lanc>tbody>tr>td:nth-child(1){grid-area:1/1;color:var(--mut);}
+    .tb-lanc>tbody>tr>td:nth-child(2){grid-area:1/2;}
+    .tb-lanc>tbody>tr>td:nth-child(4){grid-area:1/3;}
+    .tb-lanc>tbody>tr>td:nth-child(6){grid-area:1/4;}
+    .tb-lanc>tbody>tr>td:nth-child(3){grid-area:2/1/2/3;}
+    .tb-lanc>tbody>tr>td:nth-child(5){grid-area:2/3/2/5;font-size:11px;color:var(--mut);}
+    .tb-lanc>tbody>tr>td:nth-child(5)::before{content:"saldo após ";}
+    .tb-lanc>tbody>tr>td>select{width:100%;}
+    /* Início → metas por categoria: nome e valor numa linha; meta e barra na de baixo */
+    .meta-cat>span:first-child{width:auto!important;flex:1 1 55%;}
+    .meta-cat>span:last-child{width:auto!important;order:2;}
+    .meta-cat::after{content:"";order:2;flex-basis:100%;height:0;} /* quebra a linha depois do valor */
+    .meta-cat>input{order:3;}
+    .meta-cat>.bar{order:4;flex:1 1 40%!important;}
     body{padding:8px 8px calc(78px + env(safe-area-inset-bottom));}
     .eyebrow,.sub,#savestate{display:none;}
     h1{font-size:19px;}
@@ -307,6 +341,7 @@ function migrarEstado(oIn){
     (v.gastos||[]).forEach(g=>{if(!g.planoId)g.planoId=v.planoAtivoId||null;});
     (v.planos||[]).forEach(pl=>{if(pl.alimentacaoDiaPorPessoa!=null&&!(pl.alimentacao&&pl.alimentacao.extras!=null)){pl.alimentacao={...(pl.alimentacao||{}),extras:+pl.alimentacaoDiaPorPessoa};}delete pl.alimentacaoDiaPorPessoa;
       if(pl.hospedagem&&!pl.hospedagem.inclui)pl.hospedagem.inclui={};});
+    if(!fr.recebimentos||typeof fr.recebimentos!=="object")fr.recebimentos={}; // "Já caiu?": {chave:{status,valor,em,adiadoAte}}
     if(fr.diasDireito==null)fr.diasDireito=30;if(fr.aquisitivo==null)fr.aquisitivo="atual";});
   return o;
 }
@@ -881,7 +916,7 @@ function vVisao(){
   const agNovo=novos.reduce((s,f)=>s+f.valor,0);
   const envelope=rendaPrev-fixPrev-alvoS-agNovo;
   const margem=envelope-varPrev;
-  return `
+  return cardFeriasHoje()+`
   <div class="card"><div class="row">
     <span>Período:</span>
     <select onchange="state.visSel=this.value;save();render()">
@@ -939,7 +974,7 @@ function vVisao(){
 
   <div class="card"><h3>Metas por categoria — ${lbl(M.ym)}</h3>
     ${cats.map(c=>{const g=porCat(M)[c]||0;const mt=+state.metasCat[c]||0;const p=mt>0?g/mt:0;
-      return `<div class="row" style="margin:6px 0;gap:10px">
+      return `<div class="row meta-cat" style="margin:6px 0;gap:10px">
         <span style="width:140px;font-size:13px"><span style="color:${catColor(c)}">●</span> ${esc(c)}</span>
         <input type="number" placeholder="meta" value="${mt||""}" style="width:90px" onchange="state.metasCat['${jsAttr(c)}']=+this.value||0;save();render()">
         <div class="bar" style="flex:1;margin-top:0"><div style="width:${mt>0?Math.min(p*100,100):0}%;background:${p>1?"#e11d48":p>.8?"#d97706":"#0d9488"}"></div></div>
@@ -1147,7 +1182,7 @@ function vSobras(){
   </div>
 
   ${movs.length?`<div class="card"><h3>Lançamentos de ${lbl(sobSel)} (${movs.length})</h3>
-    <table><tr><th>Dia</th><th>Descrição</th><th>Categoria</th><th class="n">Valor</th><th class="n">Saldo após</th><th></th></tr>
+    <table class="tb-lanc"><tr><th>Dia</th><th>Descrição</th><th>Categoria</th><th class="n">Valor</th><th class="n">Saldo após</th><th></th></tr>
     ${(()=>{let sld=C.renda;const lin=[];
       // ordena por dia e recalcula saldo corrente considerando pagos como já saídos no início
       sld=C.renda-C.pago;
@@ -2200,7 +2235,7 @@ function vEditar(){
       <p class="note" style="margin-top:4px">${renda(m)>0?"Isso representa "+Math.round(soma/renda(m)*100)+"% da renda do mês ("+fmt(renda(m))+"). Sobraria "+fmt(renda(m)-soma)+" se fossem só essas contas.":""}</p></div>`;})()}
   <div class="card"><h3>Contas de ${lbl(m.ym)}</h3>
   <p class="note" style="margin-top:0">Valores em <span style="color:#be123c;font-weight:600">vermelho</span> são <b>provisórios</b> (estimados, o valor real ainda vai chegar). A coluna <b>Estimar por</b> define a regra de cada conta ao clicar em ↩: último mês, mediana/média dos 3 últimos, maior ou menor recente. Digite por cima a qualquer momento para confirmar o valor real (fica preto). Marque ☆ para tornar uma conta <b>detalhável</b> (cartão, empréstimo) e use 🔍 para abrir os itens da fatura — eles se espalham nas categorias reais dos gráficos; o que faltar para fechar o total vira "resto".</p>
-  <table><tr><th title="Marque para somar na calculadora">🧮</th><th>Conta</th><th>Categoria</th><th>Tipo</th><th>Vence dia</th><th>Estimar por</th><th class="n">Valor</th><th></th><th></th></tr>
+  <table class="tb-contas"><tr><th title="Marque para somar na calculadora">🧮</th><th>Conta</th><th>Categoria</th><th>Tipo</th><th>Vence dia</th><th>Estimar por</th><th class="n">Valor</th><th></th><th></th></tr>
   ${contas.map(([n,v])=>{const pv=provOf(m,n);const est=estimaConta(n,m.ym);const nn=jsAttr(n);const cAtual=catOf(n);const cats=catList();const det=ehDetalhavel(n);const nItens=itensFatura(m,n).length;return `<tr><td><input type="checkbox" style="width:auto;cursor:pointer" ${calcSel[n]?"checked":""} onchange="calcToggle('${nn}')"></td><td>${esc(n)} <button class="btn" style="padding:1px 5px;font-size:11px;opacity:.65" title="Renomear conta (propaga em meses, pagamentos, dívidas, agenda e simulações)" onclick="renomearConta('${nn}')">✏</button>${pv?' <span class="pill" style="background:#ffe4e6;color:#be123c;font-size:10px">provisório</span>':''}${det?` <span class="pill" style="background:#eef2ff;color:#4f46e5;font-size:10px">fatura${nItens?" · "+nItens+" itens":""}</span>`:''}${parcelaBadge(n,m.ym)}</td>
     <td><select style="padding:4px 6px;font-size:12px" onchange="if(this.value==='__nova__'){this.value='${jsAttr(cAtual)}';novaCatConta('${nn}');}else setCatConta('${nn}',this.value)">${cats.map(c=>`<option value="${esc(c)}" ${c===cAtual?"selected":""}>${esc(c)}</option>`).join("")}<option value="__nova__">＋ nova categoria…</option></select></td>
     <td><select onchange="setTipo('${nn}',this.value==='1');render()"><option value="1" ${tipoOf(n)==='Fixo'?'selected':''}>Fixo</option><option value="0" ${tipoOf(n)==='Variável'?'selected':''}>Variável</option></select></td>
@@ -2967,11 +3002,12 @@ function calcFerias(f){
   const adto13Auto=f.adiantar13?r2(brutoFerias(f)/2):0;
   const adto13=f.adiantar13?(ov.adto13!=null?+ov.adto13:adto13Auto):0;
   const liquidoFerias=r2(brutoFeriasTot-inss-irrf+abono);
-  const totalReceber=r2(liquidoFerias+adto13);
+  const totalReceberCalc=r2(liquidoFerias+adto13);
+  const totalReceber=ov.reciboReal!=null?r2(+ov.reciboReal):totalReceberCalc; // "Já caiu?": valor real do recibo, quando confirmado
   const mesPagamentoAuto=f.inicio?ymOfIso(addDiasISO(f.inicio,-2)):mesAtualYm();
   const mesPagamento=ov.mesPagamento||mesPagamentoAuto;
   return{bd,diasVendidos,diasGozados,baseFerias,terco,brutoFeriasTot,abonoBase,abono,inss,irrf,baseIR,adto13,
-    liquidoFerias,totalReceber,mesPagamento,
+    liquidoFerias,totalReceber,totalReceberCalc,reciboConfirmado:ov.reciboReal!=null,mesPagamento,
     autoAbono:ov.abono==null,autoInss:ov.inss==null,autoIrrf:ov.irrf==null,autoAdto13:ov.adto13==null,autoMesPg:!ov.mesPagamento,
     abonoAuto,inssAuto,irrfAuto,adto13Auto,mesPagamentoAuto};
 }
@@ -3028,11 +3064,12 @@ function calc13(f){
   const baseIR=Math.max(brutoTotal-inss-dep*(state.folhaCfg.depDed||0),0);
   const irrfAuto=r2(calcIRRF(baseIR));
   const irrf=ov.irrf!=null?+ov.irrf:irrfAuto;
-  const parc2=r2(brutoTotal-parc1-inss-irrf);
+  const parc2Calc=r2(brutoTotal-parc1-inss-irrf);
+  const parc2=ov.parc2Real!=null?r2(+ov.parc2Real):parc2Calc; // "Já caiu?": valor real da 2ª parcela, quando confirmado
   const anoRef=f.inicio?+f.inicio.slice(0,4):+hojeISO().slice(0,4);
   const ymParc1=ov.ymParc1||(anoRef+"-11");
   const ymParc2=ov.ymParc2||(anoRef+"-12");
-  return{adiantou,avos,brutoTotal,pct1,parc1,parc1Auto,inss,inssAuto,irrf,irrfAuto,baseIR,parc2,ymParc1,ymParc2,
+  return{adiantou,avos,brutoTotal,pct1,parc1,parc1Auto,parc2Calc,parc2Confirmada:ov.parc2Real!=null,inss,inssAuto,irrf,irrfAuto,baseIR,parc2,ymParc1,ymParc2,
     autoParc1:ov.parc1==null,autoInss:ov.inss==null,autoIrrf:ov.irrf==null,
     autoYmParc1:!ov.ymParc1,autoYmParc2:!ov.ymParc2,total:r2(parc1+parc2)};
 }
@@ -3411,6 +3448,127 @@ async function calcularKm(id,pid,tid){
 }
 const linkRota=(de,para)=>"https://www.google.com/maps/dir/?api=1&travelmode=driving&origin="+encodeURIComponent(de)+"&destination="+encodeURIComponent(para);
 
+// ---- "Já caiu?": cada dinheiro previsto das férias, no dia previsto, pergunta se caiu ----
+// Datas: recibo ~2 dias antes do início; salário reduzido dia 1º do mês em que cai; 13º: 1ª até 30/11, 2ª até 20/12.
+// "Sim" grava o valor real no campo que já existe (ou no "confirmado" do recibo/2ª parcela) e oferece as ações
+// que já existem; "Ainda não" pergunta de novo amanhã; depois de 3 dias aparece "atrasado?". Para de perguntar após 30 dias.
+function itensPrevistosFerias(f){
+  if(!f.inicio)return[];
+  const c=calcFerias(f),c13=calc13(f),rows=linhaDoTempoFerias(f),out=[];
+  const idx=ym=>rows.findIndex(r=>r.ymPag===ym);
+  out.push({key:"recibo",nome:"Recibo de férias",data:addDiasISO(f.inicio,-2),valor:c.totalReceberCalc,ym:c.mesPagamento,linha:idx(c.mesPagamento)});
+  rows.forEach((r,i)=>{if(r.sal)out.push({key:"sal:"+r.ymPag,nome:"Salário de "+lbl(r.civilRef)+" (reduzido pelas férias)",data:r.ymPag+"-01",valor:r.salAuto,ym:r.ymPag,linha:i});});
+  if(!c13.adiantou)out.push({key:"13a",nome:"13º — 1ª parcela",data:c13.ymParc1+"-30",valor:c13.parc1Auto,ym:c13.ymParc1,linha:idx(c13.ymParc1)});
+  out.push({key:"13b",nome:"13º — 2ª parcela",data:c13.ymParc2+"-20",valor:c13.parc2Calc,ym:c13.ymParc2,linha:idx(c13.ymParc2)});
+  return out;
+}
+function jaCaiuPendentes(f,hoje){
+  hoje=hoje||hojeISO();const R=f.recebimentos||{};
+  return itensPrevistosFerias(f).filter(it=>{const r=R[it.key]||{};
+    if(r.status==="fechado")return false;
+    if(r.status==="confirmado")return r.em===hoje; // fica mais o dia com os atalhos, depois some
+    if(r.adiadoAte&&r.adiadoAte>hoje)return false;
+    return it.data<=hoje&&hoje<=addDiasISO(it.data,30);});
+}
+function jaCaiuSim(fid,key){
+  const f=feriasGet(fid);if(!f)return;const it=itensPrevistosFerias(f).find(x=>x.key===key);if(!it)return;
+  const el=document.getElementById("jc_"+fid+"_"+key.replace(/\W/g,"_"));const v=el&&el.value!==""?+el.value:it.valor;
+  if(!(v>0)){alert("Digite quanto caiu.");return;}
+  if(key==="recibo"){if(!f.override)f.override={};f.override.reciboReal=r2(v);}
+  else if(key.startsWith("sal:")){if(!f.overrideLinha)f.overrideLinha={};f.overrideLinha[it.ym]=r2(v);}
+  else if(key==="13a"){if(!f.treze)f.treze={};if(!f.treze.override)f.treze.override={};f.treze.override.parc1=r2(v);}
+  else if(key==="13b"){if(!f.treze)f.treze={};if(!f.treze.override)f.treze.override={};f.treze.override.parc2Real=r2(v);}
+  if(!f.recebimentos)f.recebimentos={};f.recebimentos[key]={status:"confirmado",valor:r2(v),em:hojeISO()};
+  save();render();
+}
+function jaCaiuNao(fid,key){const f=feriasGet(fid);if(!f)return;if(!f.recebimentos)f.recebimentos={};
+  const r=f.recebimentos[key]||{};f.recebimentos[key]={...r,status:"aguardando",adiadoAte:addDiasISO(hojeISO(),1)};save();render();}
+function jaCaiuFechar(fid,key){const f=feriasGet(fid);if(!f||!f.recebimentos||!f.recebimentos[key])return;f.recebimentos[key].status="fechado";save();render();}
+function blocoJaCaiu(f){
+  const hoje=hojeISO(),pend=jaCaiuPendentes(f,hoje);if(!pend.length)return"";
+  const br=d=>d.split("-").reverse().slice(0,2).join("/"),R=f.recebimentos||{};
+  return `<div style="margin-top:8px;padding:8px 10px;border:1px dashed var(--teal);border-radius:10px">
+    <b style="font-size:13px">💰 Já caiu?</b>
+    ${pend.map(it=>{const r=R[it.key]||{},id="jc_"+f.id+"_"+it.key.replace(/\W/g,"_"),k=jsAttr(it.key);
+      if(r.status==="confirmado"){
+        const acoes=[];
+        if(it.linha>=0)acoes.push(`<button class="btn" style="padding:3px 8px" onclick="aplicarLinhaFerias('${f.id}',${it.linha})">aplicar em ${lbl(it.ym)}</button>`);
+        if(it.key==="recibo"&&!(f.envelope&&f.envelope.transferido))acoes.push(`<button class="btn" style="padding:3px 8px" onclick="transferirEnvelope('${f.id}')">separar o envelope do caixa</button>`);
+        if(it.key==="recibo"&&reservaSugeridaFerias(f)>0&&!(state.metasCurto||[]).some(m=>(m.nome||"").startsWith("Reserva pós-férias")))acoes.push(`<button class="btn" style="padding:3px 8px" onclick="criarMetaPosFerias('${f.id}')">guardar a reserva como meta</button>`);
+        return `<p class="note" style="margin-top:6px">✔ <b>${esc(it.nome)}</b> confirmado em ${br(r.em)}: ${fmt(r.valor)}</p>
+          <div class="row" style="gap:6px">${acoes.join("")}<button class="btn" style="padding:3px 8px" onclick="jaCaiuFechar('${f.id}','${k}')">pronto</button></div>`;}
+      const atrasado=hoje>addDiasISO(it.data,3);
+      const quando=it.data===hoje?"Era para cair hoje":atrasado?`⚠ Atrasado? Era para cair em ${br(it.data)}`:`Era para cair em ${br(it.data)}`;
+      return `<p class="note" style="margin-top:6px">${quando}: <b>${esc(it.nome)}</b> — previsto ${fmt(it.valor)}. Já caiu?</p>
+        <div class="row" style="gap:6px"><label style="font-size:12px">Sim, caiu R$ <input id="${id}" type="number" step="0.01" value="${(+it.valor).toFixed(2)}" style="width:110px"></label>
+        <button class="btn primary" style="padding:3px 10px" onclick="jaCaiuSim('${f.id}','${k}')">Sim, caiu</button>
+        <button class="btn" style="padding:3px 10px" onclick="jaCaiuNao('${f.id}','${k}')">Ainda não</button></div>`;}).join("")}
+  </div>`;
+}
+// card só com o "Já caiu?" quando há pergunta pendente fora das datas das férias (ex.: salário reduzido, 13º)
+function cardJaCaiu(fora){return (state.ferias||[]).filter(f=>f!==fora).map(f=>{const b=blocoJaCaiu(f);return b?`<div class="card" style="border-color:var(--teal)"><h3 style="margin:0">💰 ${esc(f.nome||"Férias")}</h3>${b}</div>`:"";}).join("");}
+
+// ---- Modo férias no Início: card que aparece da VÉSPERA até o último dia das férias ----
+// Só LÊ o que já existe (aba Férias + lançamentos do mês): não grava nada e não tem cálculo novo.
+// Some sozinho fora dessas datas ou se o período/viagem for apagado.
+function feriasDeHoje(hoje){
+  hoje=hoje||hojeISO();
+  return (state.ferias||[]).find(f=>f.inicio&&hoje>=addDiasISO(f.inicio,-1)&&hoje<=fimFerias(f))||null;
+}
+// gastos do dia a dia (lançados no mês, fora do envelope) com data dentro das férias
+function gastosForaViagem(f){
+  const ini=f.inicio,fim=fimFerias(f),out=[];
+  Object.entries(state.movs||{}).forEach(([ym,arr])=>(arr||[]).forEach(x=>{
+    if(x.tipo==="renda"||x._ferias)return; // recebimentos e a "transferência para o envelope" não contam
+    const d=ym+"-"+String(+x.dia||1).padStart(2,"0");if(d>=ini&&d<=fim)out.push({...x,data:d});}));
+  return out.sort((a,b)=>a.data.localeCompare(b.data));
+}
+function cardFeriasHoje(){
+  const hoje=hojeISO(),f=feriasDeHoje(hoje);if(!f)return cardJaCaiu(null);
+  const br=d=>d.split("-").reverse().slice(0,2).join("/");
+  const nome=esc(f.nome||"Férias"),fim=fimFerias(f),p=planoAtivo(f);
+  const ida=p?idaViagem(f,p):"",volta=p?voltaViagem(f,p):"";
+  const gv=p?gastosDoPlano(f):[],totViagem=r2(gv.reduce((s,g)=>s+(+g.valor||0),0));
+  const fora=gastosForaViagem(f),totFora=r2(fora.reduce((s,x)=>s+(+x.valor||0),0));
+  const teto=envelopeTetoFerias(f),resta=envelopeRestoFerias(f);
+  const separado=f.envelope&&f.envelope.transferido;
+  const abrir=`ferSel='${f.id}';go('ferias')`;
+  const c=calcFerias(f),rec=(f.recebimentos||{}).recibo;
+  if(hoje<f.inicio){ // véspera: tudo junto
+    return cardJaCaiu(f)+`<div class="card" style="border-color:var(--teal)"><h3>🏖️ Amanhã começam as ${nome} (${br(f.inicio)} a ${br(fim)})</h3>
+      <p class="note" style="margin-top:2px">${rec&&rec.status!=="aguardando"&&rec.valor?`✔ o recibo de férias caiu: <b>${fmt(rec.valor)}</b>`:`o recibo de férias (previsto <b>${fmt(c.totalReceberCalc)}</b>) já caiu?`}</p>
+      <p class="note" style="margin-top:2px">${p?`Viagem <b>${esc(p.nome||"")}</b>${p.destino?" ("+esc(p.destino)+")":""} de ${br(ida)} a ${br(volta)} · envelope <b>${fmt(teto)}</b>`:"Nenhuma viagem escolhida na aba Férias."}
+      ${p?(separado?' · <span class="pill teal">✔ já separado do caixa</span>':' · <b style="color:#b45309">ainda não separou do caixa</b>'):""}</p>
+      ${blocoJaCaiu(f)}
+      <div class="row" style="margin-top:8px"><button class="btn" onclick="${abrir}">abrir a aba Férias →</button></div></div>`;
+  }
+  const dia=Math.round((new Date(hoje+"T00:00:00")-new Date(f.inicio+"T00:00:00"))/86400000)+1;
+  let viagem="";
+  if(p){
+    const cab=`Na viagem <b>${esc(p.nome||"viagem")}</b>${p.destino?" ("+esc(p.destino)+")":""} · ${br(ida)} a ${br(volta)}`;
+    let det;
+    if(hoje<ida){const n=Math.round((new Date(ida+"T00:00:00")-new Date(hoje+"T00:00:00"))/86400000);det=`começa em ${n} dia(s) · envelope ${fmt(teto)}`;}
+    else if(hoje<=volta){const dr=diasRestantesViagem(f),gh=r2(gv.filter(g=>g.data===hoje).reduce((s,g)=>s+(+g.valor||0),0));
+      det=`resta no envelope <b class="${resta>=0?"teal":"rose"}">${fmt(resta)}</b> · dá <b>${fmt(Math.max(0,resta)/Math.max(1,dr))}/dia</b> pelos ${dr} dia(s) que faltam · hoje ${fmt(gh)}`;}
+    else det=`terminou: gastou ${fmt(totViagem)} de ${fmt(teto)}`;
+    viagem=`<tr><td>${cab}<br><span class="note" style="margin:0">${det}</span></td><td class="n">${fmt(totViagem)}</td></tr>`;
+  }
+  const ult=[...gv.map(g=>({nome:g.nome,valor:+g.valor,data:g.data||""})),...fora.map(x=>({nome:x.nome,valor:+x.valor,data:x.data}))]
+    .sort((a,b)=>b.data.localeCompare(a.data)).slice(0,3);
+  return cardJaCaiu(f)+`<div class="card" style="border-color:var(--teal)"><div class="flexbet"><h3 style="margin:0">🏖️ ${nome} — dia ${dia} de ${+f.diasGozo||dia} (${br(f.inicio)} a ${br(fim)})</h3>
+      <span class="pill teal">modo férias</span></div>
+    <table style="margin-top:6px">
+      <tr><td><b>Total gasto nas férias</b></td><td class="n"><b>${fmt(r2(totViagem+totFora))}</b></td></tr>
+      ${viagem}
+      <tr><td>Fora da viagem <span class="note" style="margin:0">(gastos do dia a dia lançados no mês, durante as férias)</span></td><td class="n">${fmt(totFora)}</td></tr>
+    </table>
+    ${ult.length?`<p class="note" style="margin-top:6px">Últimos: ${ult.map(x=>esc(x.nome)+" "+fmt(x.valor)).join(" · ")}</p>`:""}
+    ${blocoJaCaiu(f)}
+    <div class="row" style="margin-top:8px"><button class="btn primary" onclick="abrirLancamento()">+ Lançar gasto</button>
+      <button class="btn" onclick="${abrir}">ver tudo na aba Férias →</button></div>
+    <p class="note" style="margin-top:4px">Durante a viagem, o + já lança na viagem (dá para trocar para "Gastos do mês" na hora de lançar).</p></div>`;
+}
+
 // ---- tela ----
 function trechoHTML(f,pl,t){
   const custo=custoTrecho(t);
@@ -3510,7 +3668,7 @@ function vFerias(){
       ${linhaOverride("− IRRF (sobre férias + 1/3)","irrf",c.irrfAuto,c.irrf,c.autoIrrf)}
       ${f.venderDias>0?linhaOverride("+ Abono pecuniário ("+f.venderDias+" dias + 1/3, isento)","abono",c.abonoAuto,c.abono,c.autoAbono):""}
       ${f.adiantar13?linhaOverride("+ Adiantamento 13º (50% do bruto)","adto13",c.adto13Auto,c.adto13,c.autoAdto13):""}
-      <tr style="border-top:1px solid var(--border)"><td style="padding-top:6px"><b>= Total a receber</b></td><td class="n" style="padding-top:6px"><b>${fmt(c.totalReceber)}</b></td><td></td></tr>
+      <tr style="border-top:1px solid var(--border)"><td style="padding-top:6px"><b>= Total a receber</b>${c.reciboConfirmado?' <span class="pill teal" style="font-size:10px">confirmado: caiu</span>':""}</td><td class="n" style="padding-top:6px"><b>${fmt(c.totalReceber)}</b>${c.reciboConfirmado?`<br><span class="note" style="margin:0;font-size:10px">calculado: ${fmt(c.totalReceberCalc)}</span>`:""}</td><td>${c.reciboConfirmado?`<button class="btn" style="padding:2px 6px" title="Voltar ao calculado" onclick="setFerOverride('${f.id}','reciboReal',null)">↺</button>`:""}</td></tr>
     </table>
     <div class="row" style="margin-top:8px">
       <label>Mês do pagamento ${c.autoMesPg?'<span class="pill" style="background:#f1f5f9;color:#64748b;font-size:10px">auto: ~2 dias antes</span>':'<span class="pill" style="background:#ede9fe;color:#6d28d9;font-size:10px">manual</span>'} <input type="month" value="${c.mesPagamento}" onchange="setFerOverride('${f.id}','mesPagamento',this.value)"></label>
@@ -3585,7 +3743,7 @@ function vFerias(){
         ${linhaOverride("− INSS (sobre o 13º integral)","inss",c13.inssAuto,c13.inss,c13.autoInss,"setTrezeOverride")}
         ${linhaOverride("− IRRF (sobre o 13º integral)","irrf",c13.irrfAuto,c13.irrf,c13.autoIrrf,"setTrezeOverride")}
         <tr><td>− 1ª parcela já paga</td><td class="n">− ${fmt(c13.parc1)}</td><td></td></tr>
-        <tr style="border-top:1px solid var(--border)"><td style="padding-top:5px"><b>= 2ª parcela líquida</b></td><td class="n" style="padding-top:5px"><b>${fmt(c13.parc2)}</b></td><td></td></tr>
+        <tr style="border-top:1px solid var(--border)"><td style="padding-top:5px"><b>= 2ª parcela líquida</b>${c13.parc2Confirmada?' <span class="pill teal" style="font-size:10px">confirmado: caiu</span>':""}</td><td class="n" style="padding-top:5px"><b>${fmt(c13.parc2)}</b>${c13.parc2Confirmada?`<br><span class="note" style="margin:0;font-size:10px">calculado: ${fmt(c13.parc2Calc)}</span>`:""}</td><td>${c13.parc2Confirmada?`<button class="btn" style="padding:2px 6px" onclick="setTrezeOverride('${f.id}','parc2Real',null)">↺</button>`:""}</td></tr>
         <tr><td><b>Total líquido do 13º</b></td><td class="n"><b>${fmt(c13.total)}</b></td><td></td></tr>
       </table>
       <p class="note" style="margin-top:4px">A 1ª e a 2ª parcela entram sozinhas nos cards acima, no mês em que caem.</p>
@@ -3772,7 +3930,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.10.02-11";
+const APP_VERSAO_TXT="2026.10.02-13";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
