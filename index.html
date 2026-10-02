@@ -3772,8 +3772,9 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO=4;
-const APP_VERSAO_TXT="2026.10.02-8";
+const APP_VERSAO_TXT="2026.10.02-9";
+// número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
+const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
@@ -3885,6 +3886,24 @@ async function fsLer(){
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(erroFs(r.status,j));
   const f=j.fields||{},sv=k=>f[k]&&f[k].stringValue;
   return{cifra:sv("cifra"),iv:sv("iv"),salt:sv("salt"),gz:!!(f.gz&&f.gz.booleanValue),versao:+((f.versao&&f.versao.integerValue)||0),v:+((f.v&&f.v.integerValue)||0),por:sv("por"),em:f.em&&f.em.timestampValue,updateTime:j.updateTime};}
+// ---- versão mínima na nuvem (casas/config.min): a 1ª sincronização de cada versão nova sobe esse
+// número, e as regras do Firestore recusam gravação de quem tem versão menor. Assim uma janela ou
+// aparelho com o app antigo (que ainda não recarregou) NÃO consegue mais mandar dados velhos.
+const fsUrlConfig=()=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/casas/config";
+async function fsLerMin(){
+  const r=await fetch(fsUrlConfig(),{headers:{Authorization:"Bearer "+await fbToken()}});
+  if(r.status===404)return 0;const j=await r.json().catch(()=>({}));if(!r.ok)return 0;
+  return +((j.fields&&j.fields.min&&j.fields.min.integerValue)||0);}
+async function fsSubirMin(){
+  const r=await fetch(fsUrlConfig(),{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},
+    body:JSON.stringify({fields:{min:{integerValue:String(APP_VERSAO)},por:{stringValue:sync.email||""}}})});
+  if(r.ok)registrar("nuvem passou a exigir a versão "+APP_VERSAO_TXT+" ou mais nova");
+  else registrar("aviso: não consegui marcar a versão mínima na nuvem (regras do Firebase antigas?)");}
+function versaoBarrada(){
+  registrar("versão "+APP_VERSAO_TXT+" é antiga para a nuvem: recarregando");
+  try{if(typeof sessionStorage!=="undefined"&&!sessionStorage.getItem("recarregouVersao")&&typeof location!=="undefined"&&location.reload){
+    sessionStorage.setItem("recarregouVersao","1");location.reload();}}catch(e){}
+  throw new Error("Este aparelho está com uma versão antiga do app e não envia nada. Recarregue a página (no computador: Ctrl/Cmd + Shift + R; no iPhone: feche e abra o app).");}
 // updateTime: grava só se ninguém gravou depois (concorrência otimista). semCheck: grava direto.
 async function fsGravar(d,updateTime,semCheck){
   const pre=semCheck?"":updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
@@ -3933,6 +3952,10 @@ async function sincronizar(manual){
       if(typeof navigator!=="undefined"&&navigator.onLine===false){statusSync("offline");return;}
       statusSync("sincronizando");
       let ultimoConflito="";
+      if(janelaVelha())throw new Error("Esta janela está com uma versão antiga do app — recarregue a página.");
+      {const min=await fsLerMin();
+        if(min>APP_VERSAO)versaoBarrada();
+        if(min<APP_VERSAO)await fsSubirMin();}
       for(let t=0;t<4;t++){
         if(janelaVelha())throw new Error("Esta janela está com uma versão antiga do app — recarregue a página.");
         absorverOutraAba(); // outra janela pode ter importado/sincronizado enquanto esta estava parada
