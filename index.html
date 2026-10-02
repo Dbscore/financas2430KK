@@ -237,7 +237,7 @@ const KEY="financas-v2";
 const DEFAULT={titulo:"Minhas Finanças",meses:SEED,tipos:{...FIXO_DEFAULT},
   meta:{alvo:0,atual:0,aporte:0,taxa:8},
   simg:{texto:"",itens:[],extras:[],guardado:{total:0,meses:0},base:null,salBase:null,baseOver:{},retirada:0,reserva:0,sobraMin:0,cenarios:[],horizonte:12,simView:"reforco"},
-  futuros:[],pagos:PAGOS_SEED,alertEmail:"",movs:{},catsUser:[],catsUserCores:{},catConta:{},catContaCores:{},vencDia:{},detalhavel:{},metasCurto:[],aloc:{montante:0,itens:{}},aportes:[],parcelas:{},provMetodo:{},prevSel:["__total__"],metasCat:{},visSel:"todos",sobraAlvo:0,
+  futuros:[],pagos:PAGOS_SEED,alertEmail:"",movs:{},catsUser:[],catsUserCores:{},catConta:{},catContaCores:{},vencDia:{},detalhavel:{},metasCurto:[],aloc:{montante:0,itens:{}},aportes:[],parcelas:{},provMetodo:{},prevSel:["__total__"],metasCat:{},visSel:"todos",sobraAlvo:0,_aparelhos:{},
   folha:{bruto:0,creche:0,pgbl:0,va:0,seguro:0,vaCred:0,dep:0,inssManual:null,irrfManual:null,outros:[]},
   folhaCfg:{inssTetoSal:8475.55,inssTeto:988.07,depDed:189.59,inssFaixas:[[1621.00,7.5],[2902.84,9],[4354.27,12],[8475.55,14]],
     irrf:[[2428.80,0,0],[2826.65,7.5,182.16],[3751.05,15,394.16],[4664.68,22.5,675.49],[999999999,27.5,908.73]],
@@ -269,6 +269,7 @@ function migrarEstado(oIn){
   if((o.simg.itens||[]).length&&!o.simg.cenarios.length){
     o.simg.cenarios=[{nome:o.simg.texto||"Cenário 1",itens:o.simg.itens,extras:o.simg.extras||[],guardado:o.simg.guardado||{total:0,meses:0}}];
     o.simg.itens=[];o.simg.extras=[];o.simg.guardado={total:0,meses:0};}
+  if(!o.meta||typeof o.meta!=="object")o.meta={...DEFAULT.meta,alvo:+o.meta||0}; // backup antigo/errado com a meta como número
   if(!Array.isArray(o.futuros))o.futuros=[];
   if(!Array.isArray(o.meses))o.meses=[];
   if(!o.pagos||typeof o.pagos!=="object")o.pagos={};
@@ -299,6 +300,7 @@ function migrarEstado(oIn){
   if(!o.coresCat)o.coresCat={};if(!o.catsAprendidas)o.catsAprendidas={};if(!Array.isArray(o.catsOcultas))o.catsOcultas=[];
   if(!o._pagoRealFix){o.meses.forEach(m=>{Object.entries(m.pagoReal||{}).forEach(([n,v])=>{if(+v>0&&o.pagos&&o.pagos[m.ym]&&o.pagos[m.ym][n]&&+m.contas[n]!==+v){
       if(!m.orcado)m.orcado={};if(!(n in m.orcado))m.orcado[n]=+m.contas[n];m.contas[n]=+v;}});});o._pagoRealFix=1;}
+  if(!o._aparelhos||typeof o._aparelhos!=="object"||Array.isArray(o._aparelhos))o._aparelhos={};
   if(!Array.isArray(o.ferias))o.ferias=[];
   o.ferias.forEach(fr=>{const v=fr.viagem||(fr.viagem={planos:[],gastos:[]});
     (v.planos||[]).forEach(pl=>{if(pl.destino==null)pl.destino=v.destino||"";if(pl.ida==null&&v.ida)pl.ida=v.ida;if(pl.volta==null&&v.volta)pl.volta=v.volta;});
@@ -867,6 +869,7 @@ function vVisao(){
       <option value="todos" ${!isM?"selected":""}>Todos os meses (médias)</option>
       ${[...ms].reverse().map(m=>`<option value="${m.ym}" ${sel===m.ym?"selected":""}>${lbl(m.ym)}</option>`).join("")}
     </select>
+    ${isM&&M.ym!==ms[ms.length-1].ym?`<button class="btn primary" onclick="state.visSel='${ms[ms.length-1].ym}';save();render()">ver ${lbl(ms[ms.length-1].ym)} (mês mais recente)</button>`:""}
     ${isM?`<span class="note">cards, score, categorias e metas refletem ${lbl(M.ym)}</span>`:`<span class="note">médias de ${ms.length} meses · escolha um mês para vê-lo isolado</span>`}
   </div></div>
 
@@ -1970,7 +1973,7 @@ async function lerHolerite(inp){
 }
 
 // ============ EDITAR ============
-let edSel=null;
+let edSel=null,edYm=null; // edYm: o mês escolhido pelo NOME — a posição muda quando a sincronização traz outro mês
 function provOf(m,n){return m.prov&&m.prov[n];}
 function setProv(idx,n,v){const m=state.meses[idx];if(!m.prov)m.prov={};if(v)m.prov[n]=true;else delete m.prov[n];save();render();}
 // método de estimativa por conta (persistido em state.provMetodo[conta])
@@ -2152,20 +2155,21 @@ let edDetOpen={};
 function toggleDet(n){edDetOpen[n]=!edDetOpen[n];render();}
 function setDetalhavel(n,v){if(!state.detalhavel)state.detalhavel={};if(v)state.detalhavel[n]=true;else delete state.detalhavel[n];save();render();}
 function vEditar(){
-  const ms=meses();if(edSel===null||edSel>=ms.length)edSel=ms.length-1;
+  const ms=meses();{const j=edYm?ms.findIndex(x=>x.ym===edYm):-1;if(j>=0)edSel=j;}
+  if(edSel===null||edSel>=ms.length)edSel=ms.length-1;edYm=ms[edSel]&&ms[edSel].ym;
   const m=ms[edSel];const idx=state.meses.findIndex(x=>x.ym===m.ym);
   const IX="mi('"+m.ym+"')"; // nos botões/campos: posição do mês calculada no clique (a lista pode ter mudado com a sincronização)
   const contas=Object.entries(m.contas);
   return `
   <div class="card"><div class="row">
-    <span>Mês:</span><select onchange="edSel=+this.value;render()">${ms.map((x,j)=>`<option value="${j}" ${j===edSel?'selected':''}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
+    <span>Mês:</span><select onchange="edSel=+this.value;edYm=null;render()">${ms.map((x,j)=>`<option value="${j}" ${j===edSel?'selected':''}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
     <button class="btn primary" onclick="novoMes(true)">+ Novo mês copiando valores</button>
     <button class="btn" onclick="novoMes(false)">+ Novo mês zerado</button>
     <button class="btn danger" onclick="delMes(${IX})">Excluir mês</button>
   </div>
   <div class="row" style="margin-top:8px">
     <label style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <input type="checkbox" style="width:auto" ${m.rascunho?"":"checked"} onchange="state.meses[${IX}].rascunho=!this.checked;save();render()">
+      <input type="checkbox" style="width:auto" ${m.rascunho?"":"checked"} onchange="incluirNasAnalises('${m.ym}',this.checked)">
       Incluir este mês nas análises (gráficos, médias, previsão e simulação)
     </label>
     ${m.rascunho?'<span class="pill" style="background:#fef3c7;color:#92400e">rascunho — fora das análises</span>':'<span class="pill teal">contando nas análises</span>'}
@@ -2311,12 +2315,20 @@ function criarMes(ym){
   const m={ym,salario:sal,extra:0,va:vaACT(ym)||(ant?ant.va:0),rascunho:true,contas,prov,orcado};
   marcarRevivido(ym);state.meses.push(m);aplicarAportesDoMes(ym);return m;
 }
+function incluirNasAnalises(ym,sim){
+  const m=state.meses.find(x=>x.ym===ym);if(!m)return;
+  const ultAntes=(mesesA().slice(-1)[0]||{}).ym;
+  m.rascunho=!sim;
+  // a Visão geral estava fixada no mês mais recente → acompanha o mês que acabou de entrar
+  if(sim&&state.visSel&&state.visSel!=="todos"&&state.visSel===ultAntes&&ym>ultAntes)state.visSel=ym;
+  save();render();
+}
 function novoMes(copiar){
   const ms=meses();const last=ms[ms.length-1];
   if(!last){ // primeiro mês do painel: nasce zerado, mês corrente
     const hoje=new Date();const ym=hoje.getFullYear()+"-"+String(hoje.getMonth()+1).padStart(2,"0");
     marcarRevivido(ym);state.meses.push({ym,salario:0,extra:0,va:0,rascunho:true,contas:{},prov:{},orcado:{}});
-    edSel=0;save();render();return;
+    edSel=0;edYm=ym;save();render();return;
   }
   const d=new Date(+last.ym.slice(0,4),+last.ym.slice(5),1);
   const ym=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
@@ -2329,7 +2341,7 @@ function novoMes(copiar){
   const prov={},orcado={};if(copiar)Object.keys(contas).forEach(k=>{if(+contas[k]>0){prov[k]=true;orcado[k]=+contas[k];}}); // valores copiados = provisórios e viram orçado
   marcarRevivido(ym);state.meses.push({ym,salario:last.salario,extra:copiar?last.extra:0,va:vaNovo,rascunho:true,contas,prov,orcado});
   const aps=aplicarAportesDoMes(ym);
-  edSel=meses().length-1;save();render();
+  edSel=meses().length-1;edYm=ym;save();render();
   const avisos=[];
   if(ag.length)avisos.push("Agenda aplicada: "+ag.map(f=>f.nome+" ("+fmt0(f.valor)+")").join(", "));
   if(aps.length)avisos.push("Aportes programados somados ao Extra: "+aps.map(a=>a.nota+" ("+fmt(a.valor)+")").join(", "));
@@ -2416,7 +2428,7 @@ function renomearConta(old){
   registrarRenome(old,novo);save();render();
   alert('Renomeada: "'+old+'" → "'+novo+'"\n\nPropagado em: todos os meses, status de pagamento, parcelamento/dívidas, vencimento, categoria, tipo, orçado, fatura, agenda e cenários de simulação.');
 }
-function delMes(i){if(confirm("Excluir "+lbl(state.meses[i].ym)+"?")){marcarApagado(state.meses[i].ym);state.meses.splice(i,1);edSel=null;save();render();}}
+function delMes(i){if(confirm("Excluir "+lbl(state.meses[i].ym)+"?")){marcarApagado(state.meses[i].ym);state.meses.splice(i,1);edSel=null;edYm=null;save();render();}}
 function delConta(i,n){if(!confirm('Remover "'+n+'" de '+lbl(state.meses[i].ym)+"? (só deste mês; o histórico dos outros meses não é afetado)"))return;delete state.meses[i].contas[n];marcarApagado("/meses/"+state.meses[i].ym+"/contas/"+n);save();render();}
 function addConta(i){
   const n=document.getElementById("ncNome").value.trim();const v=+document.getElementById("ncVal").value||0;
@@ -3762,11 +3774,36 @@ const FB_DOC="casas/principal";
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
 const APP_VERSAO=4;
-const APP_VERSAO_TXT="2026.10.02-1";
+const APP_VERSAO_TXT="2026.10.02-4";
 marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
-let primeiraSync=true;
+let primeiraSync=true,aparelhoAvisado=false;
+// ---- Aparelhos: cada navegador tem um id; ao enviar, ele se registra em state._aparelhos (vai
+// criptografado junto com os dados). Assim o card da conta mostra quem usa e quem enviou por último.
+const KEY_APARELHO=KEY+"__aparelho";
+function idAparelho(){try{let i=localStorage.getItem(KEY_APARELHO);if(!i){i="ap"+Math.random().toString(36).slice(2,10);localStorage.setItem(KEY_APARELHO,i);}return i;}catch(e){return"ap-sem-id";}}
+function nomeAparelho(){
+  const u=(typeof navigator!=="undefined"&&navigator.userAgent)||"";
+  const so=/iPhone/.test(u)?"iPhone":/iPad/.test(u)?"iPad":/Android/.test(u)?"Android":/Mac/.test(u)?"Mac":/Windows/.test(u)?"Windows":"aparelho";
+  const nav=/Edg\//.test(u)?"Edge":/CriOS|Chrome\//.test(u)?"Chrome":/FxiOS|Firefox\//.test(u)?"Firefox":/Safari\//.test(u)?"Safari":"navegador";
+  let modo="";try{if(typeof location!=="undefined"&&location.protocol==="file:")modo=" · arquivo local";
+    else if((typeof matchMedia==="function"&&matchMedia("(display-mode: standalone)").matches)||(typeof navigator!=="undefined"&&navigator.standalone))modo=" · app instalado";}catch(e){}
+  return so+" · "+nav+modo;
+}
+function registrarAparelho(){
+  if(!state._aparelhos||typeof state._aparelhos!=="object")state._aparelhos={};
+  const id=idAparelho();state._aparelhos[id]={nome:nomeAparelho(),email:sync.email||"",versao:APP_VERSAO_TXT,visto:Date.now()};
+  state._ultimoEnvio={id,em:Date.now()};
+}
+function nomeDe(st,id){const a=st&&st._aparelhos&&st._aparelhos[id];return a?a.nome+(a.email?" ("+a.email+")":""):"aparelho desconhecido";}
+function esquecerAparelho(id){if(!confirm("Tirar este aparelho da lista? (ele volta a aparecer se enviar dados de novo)"))return;delete state._aparelhos[id];marcarApagado("/_aparelhos/"+id);save();render();}
+// janelas do app abertas neste navegador (app instalado e abas contam separado)
+const JANELA=Math.random().toString(36).slice(2,8);const janelasVistas={};
+let canalJanelas=null;try{if(typeof BroadcastChannel!=="undefined"){canalJanelas=new BroadcastChannel(KEY+"-janelas");
+  canalJanelas.onmessage=e=>{const d=e.data||{};if(!d.j||d.j===JANELA)return;janelasVistas[d.j]={t:Date.now(),v:d.v,modo:d.modo};if(d.tipo==="oi")canalJanelas.postMessage({tipo:"estou",j:JANELA,v:APP_VERSAO_TXT,modo:nomeAparelho()});};
+  const ping=()=>canalJanelas.postMessage({tipo:"oi",j:JANELA,v:APP_VERSAO_TXT,modo:nomeAparelho()});ping();setInterval(ping,20000);}}catch(e){}
+function outrasJanelas(){return Object.entries(janelasVistas).filter(([,x])=>Date.now()-x.t<50000).map(([,x])=>x);}
 let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=false;
 function carregarSync(){try{return JSON.parse(localStorage.getItem(KEY_SYNC)||"{}");}catch(e){return{};}}
 function gravarSync(){try{localStorage.setItem(KEY_SYNC,JSON.stringify(sync));}catch(e){}}
@@ -3883,6 +3920,7 @@ async function sincronizar(manual){
       statusSync("sincronizando");
       let ultimoConflito="";
       for(let t=0;t<4;t++){
+        if(janelaVelha())throw new Error("Esta janela está com uma versão antiga do app — recarregue a página.");
         absorverOutraAba(); // outra janela pode ter importado/sincronizado enquanto esta estava parada
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
@@ -3895,19 +3933,23 @@ async function sincronizar(manual){
           // sem base (aparelho novo nesta conta ou recém-atualizado): a nuvem vence os conflitos;
           // deste aparelho só entram registros novos (gastos, meses) que a nuvem ainda não tem
           state=migrarEstado(mesclarEstados(state,remoto,base,base?null:{bVence:true}));reaplicarRenomes();salvarLocal();
-          registrar("recebeu da nuvem (v"+rem.versao+(rem.por?" por "+rem.por:"")+(base?"":", sem base")+")");
+          registrar("recebeu da nuvem (v"+rem.versao+", enviado por "+(remoto._ultimoEnvio?nomeDe(remoto,remoto._ultimoEnvio.id):(rem.por||"?"))+(base?"":", sem base")+")");
           sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
           if(!tinhaPendente)gravarBase(remoto);
           if(!mesmoConteudo(state,remoto)){sync.pendente=true;gravarSync();} // a junção trouxe algo daqui que a nuvem não tem
         }
         primeiraSync=false;
+        // 1x por abertura: este aparelho se registra na lista (versão, último acesso)
+        if(!aparelhoAvisado){const a=(state._aparelhos||{})[idAparelho()];if(!a||a.versao!==APP_VERSAO_TXT||Date.now()-(+a.visto||0)>6*3600000){sync.pendente=true;}}
         if(rem&&!sync.pendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
+        registrarAparelho();aparelhoAvisado=true;
         const enviado=JSON.stringify(state);
         const d=await cifrar(JSON.parse(enviado));d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
         if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
         // 3 tentativas com a checagem; na 4ª (logo depois de baixar e juntar de novo) grava direto
         const w=await fsGravar(d,rem&&rem.updateTime,t===3&&!!rem);
         if(w.conflito){ultimoConflito=w.detalhe;continue;} // outro aparelho gravou no meio: baixa de novo e junta
+        salvarLocal(); // o registro do aparelho também fica gravado aqui
         registrar("enviou para a nuvem (v"+d.versao+")");
         sync.versao=d.versao;sync.pendente=JSON.stringify(state)!==enviado;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();gravarBase(JSON.parse(enviado));statusSync("ok");
         if(sync.pendente){clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),1500);}return;
@@ -3957,6 +3999,18 @@ function cardConta(){
       ${lin("Última sincronização: <b>"+hora+"</b>"+(sync.porUltimo&&sync.porUltimo!==sync.email?" · última alteração na nuvem feita por "+sync.porUltimo:"")+(sync.pendente?" · <b>há alterações deste aparelho para enviar</b>":""))}
       ${syncStatus.tipo==="erro"?lin("<b style='color:#be123c'>⚠ "+syncStatus.msg+"</b>"):""}
       <div class="row" style="margin-top:6px"><button class="btn primary" onclick="sincronizar(true).then(()=>render())">Sincronizar agora</button><button class="btn" onclick="contaSair()">Sair</button></div>`;
+  }
+  if(syncAtivo()){
+    const meu=idAparelho(),aps=Object.entries(state._aparelhos||{}).sort((a,b)=>(+b[1].visto||0)-(+a[1].visto||0));
+    const ult=state._ultimoEnvio&&state._ultimoEnvio.id;
+    if(aps.length)corpo+=`<details style="margin-top:8px" open><summary class="note" style="cursor:pointer">📱 Aparelhos que usam esta conta (${aps.length})</summary>
+      <div style="overflow-x:auto"><table><tr><th>Aparelho</th><th>Conta</th><th>Versão</th><th>Último envio</th><th></th></tr>${aps.map(([id,a])=>{const velho=cmpVersao(a.versao||"",APP_VERSAO_TXT)<0;
+        return `<tr><td>${esc(a.nome||"?")}${id===meu?' <span class="pill teal">este</span>':""}${id===ult?' <span class="pill">enviou por último</span>':""}</td><td>${esc(a.email||"")}</td>
+        <td${velho?' style="color:#be123c;font-weight:700" title="versão antiga: feche e abra o app nesse aparelho"':""}>${esc(a.versao||"?")}</td><td>${a.visto?new Date(a.visto).toLocaleString("pt-BR"):"-"}</td>
+        <td>${id===meu?"":`<button class="btn" style="padding:2px 8px" onclick="esquecerAparelho('${jsAttr(id)}')">esquecer</button>`}</td></tr>`;}).join("")}</table></div>
+      <p class="note">Cada navegador conta como um aparelho (Chrome e Safari no mesmo Mac = 2; o arquivo local também). Versão em vermelho = antiga: feche e abra o app nele.</p></details>`;
+    const oj=outrasJanelas();
+    corpo+=lin(oj.length?`🪟 <b>${oj.length} outra(s) janela(s) do app abertas neste navegador</b>: ${oj.map(x=>esc((x.modo||"")+" "+(x.v||""))).join(", ")}. O ideal é usar uma só.`:"🪟 Só esta janela do app está aberta neste navegador.");
   }
   const log=lerLog().slice().reverse();
   if(log.length)corpo+=`<details style="margin-top:8px"><summary class="note" style="cursor:pointer">🔎 Diagnóstico — últimos ${log.length} eventos neste aparelho</summary>
