@@ -148,7 +148,7 @@
   <p class="eyebrow">Finanças da família</p>
   <div class="topo">
     <h1 id="titulo" style="cursor:pointer" title="Clique para renomear" onclick="renomear()">Minhas Finanças</h1>
-    <span id="syncstate" class="note" style="cursor:pointer;margin:0" onclick="go('backup')"></span>
+    <span id="syncstate" class="note" style="cursor:pointer;margin:0" title="Toque para sincronizar agora" onclick="if(typeof sincronizar==='function')sincronizar(true);go('backup')"></span>
     <span id="savestate" class="note" style="margin:0"></span>
     <button id="temaBtn" class="icone-btn" title="Tema" onclick="trocarTema()"></button>
     <button id="olhoBtn" class="icone-btn" title="Ocultar valores" onclick="toggleOlho()"></button>
@@ -382,13 +382,41 @@ if(typeof window!=="undefined"&&window.addEventListener){window.addEventListener
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")salvarJa();});}
 // grava no aparelho sem marcar como alteração do usuário (usado ao receber dados da sincronização)
 function salvarLocal(){try{gravarLS();backupRotativo();}catch(e){}}
-function gravarLS(){const t=JSON.stringify(state);localStorage.setItem(KEY,t);lsConhecido=t;}
+function gravarLS(){
+  if(janelaVelha())return;
+  const t=JSON.stringify(state);localStorage.setItem(KEY,t);lsConhecido=t;registrar("salvo");}
+// Cada janela grava em KEY+"__app" a versão do código que está rodando. Se outra janela abriu uma
+// versão MAIS NOVA, esta (velha) para de gravar no aparelho e recarrega — era assim que uma janela
+// antiga esquecida aberta apagava o mês novo criado na janela nova.
+const KEY_APP=KEY+"__app";
+const cmpVersao=(a,b)=>String(a).localeCompare(String(b),"en",{numeric:true});
+function janelaVelha(){
+  if(typeof APP_VERSAO_TXT==="undefined")return false;
+  let v=null;try{v=localStorage.getItem(KEY_APP);}catch(e){}
+  if(!v||cmpVersao(v,APP_VERSAO_TXT)<=0)return false;
+  registrar("janela velha ("+APP_VERSAO_TXT+" < "+v+"): não gravou");
+  if(!janelaVelha.avisou&&typeof location!=="undefined"&&location.reload){janelaVelha.avisou=1;
+    alert("Esta janela está com uma versão antiga do app (há uma mais nova aberta em outra janela). Ela vai recarregar agora.");location.reload();}
+  return true;
+}
+function marcarVersaoLocal(){try{const v=localStorage.getItem(KEY_APP);if(!v||cmpVersao(v,APP_VERSAO_TXT)<0)localStorage.setItem(KEY_APP,APP_VERSAO_TXT);}catch(e){}}
+// ---- Diagnóstico: últimos 40 eventos de gravação/sincronização (aba Backup → card da conta) ----
+const KEY_LOG=KEY+"__log";
+function registrar(ev){try{
+  const ms=(state&&state.meses)||[],ult=ms.map(m=>m.ym).sort().slice(-1)[0]||"-";
+  const l=JSON.parse(localStorage.getItem(KEY_LOG)||"[]");
+  const ant=l[l.length-1],resumo=ms.length+" meses · último "+ult;
+  if(ant&&ant.ev===ev&&ant.r===resumo&&Date.now()-ant.t<60000)ant.t=Date.now(); // não repete "salvo" a cada tecla
+  else l.push({t:Date.now(),ev,r:resumo});
+  while(l.length>40)l.shift();localStorage.setItem(KEY_LOG,JSON.stringify(l));}catch(e){}}
+function lerLog(){try{return JSON.parse(localStorage.getItem(KEY_LOG)||"[]");}catch(e){return[];}}
 // Várias janelas do app abertas no mesmo navegador (app instalado + aba, duas abas) dividem o mesmo
 // armazenamento, mas cada uma tem o seu "state" na memória. Sem isto, uma janela aberta antes de uma
 // importação continuava com os dados velhos e, ao salvar ou sincronizar, gravava-os por cima.
 // Aqui, se outra janela gravou desde a última vez que esta leu/gravou, junta em 3 vias: base = o que
 // esta janela conhecia; vale o que cada uma mudou em relação a isso. Devolve true se absorveu algo.
 function absorverOutraAba(){
+  if(janelaVelha())return false;
   let atual;try{atual=localStorage.getItem(KEY);}catch(e){return false;}
   if(atual==null||atual===lsConhecido)return false;
   try{
@@ -397,7 +425,7 @@ function absorverOutraAba(){
     state=migrarEstado(mesclarEstados(state,outro,base,base?null:{bVence:true}));
     if(typeof reaplicarRenomes==="function")reaplicarRenomes();
   }catch(e){return false;}
-  lsConhecido=atual;
+  lsConhecido=atual;registrar("juntou com outra janela");
   if(typeof recarregarSync==="function")recarregarSync();
   return true;
 }
@@ -419,8 +447,8 @@ function marcarRevivido(k){if(state._apagados&&state._apagados[k]>0)state._apaga
 // alteração qualquer no outro aparelho não desfaz o que foi feito aqui. Só quando OS DOIS mudaram o
 // mesmo campo vale o lado editado por último (_atualizadoEm). Sem base (1ª vez, "Importar e
 // juntar"), é a junção de duas vias de antes.
-// Listas de registros com id (ou ym): união por chave; registro que existia na base e sumiu de um
-// lado = apagado nesse lado (não volta). Exclusões marcadas em _apagados também não voltam.
+// Listas de registros com id (ou ym): união por chave; só sai o que foi apagado com marcarApagado()
+// (marcador em _apagados). Registro ausente de um lado, sem marcador, continua.
 function iguais(x,y){
   if(x===y)return true;if(typeof x!==typeof y||x===null||y===null||typeof x!=="object")return false;
   if(Array.isArray(x)!==Array.isArray(y))return false;
@@ -437,13 +465,18 @@ function mesclarEstados(a,b,base,opc){
   const NADA={}; // marcador de "não existe"
   const obj=x=>x&&typeof x==="object"&&!Array.isArray(x);
   const chave=x=>obj(x)?(x.id!=null?x.id:(x.ym!=null?x.ym:null)):null;
+  const temRegistros=v=>Array.isArray(v)&&v.length>0&&v.every(e=>chave(e)!=null);
   function m(x,y,z,path){
     if(iguais(x,y))return x;
-    if(z!==NADA){if(iguais(x,z))return y;if(iguais(y,z))return x;}
+    // regra das 3 vias (só um lado mudou em relação à base → vale esse lado). NÃO vale para listas de
+    // registros nem para objetos que as contêm: lá a junção é item a item, senão um lado com dados
+    // velhos (que nunca teve o mês novo) levaria a lista inteira e o mês sumiria.
+    const tresVias=()=>{if(z!==NADA){if(iguais(x,z))return{v:y};if(iguais(y,z))return{v:x};}return null;};
     if(Array.isArray(x)&&Array.isArray(y)){
       const zArr=Array.isArray(z)?z:[];
       const todos=[...x,...y];
-      if(todos.length&&todos.every(e=>chave(e)!=null)){
+      if(!(todos.length&&todos.every(e=>chave(e)!=null))){const r=tresVias();if(r)return r.v;}
+      else{
         const mz=new Map(zArr.filter(e=>chave(e)!=null).map(e=>[String(chave(e)),e]));
         const ordem=[],mapa=new Map();
         const add=(e,lado)=>{const k=String(chave(e));if(apagado(k))return;if(!mapa.has(k)){mapa.set(k,{});ordem.push(k);}mapa.get(k)[lado]=e;};
@@ -451,9 +484,10 @@ function mesclarEstados(a,b,base,opc){
         const out=[];
         ordem.forEach(k=>{const v=mapa.get(k),zb=mz.has(k)?mz.get(k):NADA;
           if(v.x&&v.y){out.push(m(v.x,v.y,zb,path+"/"+k));return;}
-          const so=v.x||v.y;
-          if(zb!==NADA){if(iguais(so,zb))return; } // existia na base, o outro lado apagou e este não mexeu → apagado
-          out.push(so);});
+          // só um lado tem: fica. Sumir de um lado sem marcador em _apagados NÃO é exclusão — uma janela
+          // ou aparelho com dados velhos (que nunca teve o registro) não pode apagar um mês novo.
+          // Exclusões de verdade passam por marcarApagado() e já foram barradas no add() acima.
+          out.push(v.x||v.y);});
         return out;
       }
       return aVence?x:y;
@@ -465,11 +499,12 @@ function mesclarEstados(a,b,base,opc){
         const zk=zo&&(k in zo)?zo[k]:NADA;
         if(k in x&&k in y){o[k]=m(x[k],y[k],zk,p);return;}
         const v=k in x?x[k]:y[k];
-        if(zk!==NADA&&iguais(v,zk))return; // o outro lado removeu esta chave e este não mexeu
+        if(zk!==NADA&&iguais(v,zk)&&!temRegistros(v))return; // o outro lado removeu esta chave e este não mexeu (lista de registros: só com marcador)
         o[k]=v;
       });
       return o;
     }
+    {const r=tresVias();if(r)return r.v;}
     return aVence?x:y;
   }
   const r=m(a,b,base?base:NADA,"");
@@ -502,6 +537,7 @@ const fmt0=v=>olhoAberto()?"R$ "+Math.round(v??0).toLocaleString("pt-BR"):"R$ �
 const NM=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 const lbl=ym=>{const[y,m]=ym.split("-");return NM[+m-1]+"/"+y.slice(2);};
 const uid=()=>Math.random().toString(36).slice(2,9);
+const mi=ym=>state.meses.findIndex(x=>x.ym===ym);
 const meses=()=>[...state.meses].sort((a,b)=>a.ym.localeCompare(b.ym));
 const mesesA=()=>{const a=meses().filter(m=>!m.rascunho);return a.length?a:meses();};
 const totalContas=m=>Object.values(m.contas).reduce((s,v)=>s+(+v||0),0);
@@ -2118,29 +2154,30 @@ function setDetalhavel(n,v){if(!state.detalhavel)state.detalhavel={};if(v)state.
 function vEditar(){
   const ms=meses();if(edSel===null||edSel>=ms.length)edSel=ms.length-1;
   const m=ms[edSel];const idx=state.meses.findIndex(x=>x.ym===m.ym);
+  const IX="mi('"+m.ym+"')"; // nos botões/campos: posição do mês calculada no clique (a lista pode ter mudado com a sincronização)
   const contas=Object.entries(m.contas);
   return `
   <div class="card"><div class="row">
     <span>Mês:</span><select onchange="edSel=+this.value;render()">${ms.map((x,j)=>`<option value="${j}" ${j===edSel?'selected':''}>${lbl(x.ym)}${x.rascunho?" (rascunho)":""}</option>`).join("")}</select>
     <button class="btn primary" onclick="novoMes(true)">+ Novo mês copiando valores</button>
     <button class="btn" onclick="novoMes(false)">+ Novo mês zerado</button>
-    <button class="btn danger" onclick="delMes(${idx})">Excluir mês</button>
+    <button class="btn danger" onclick="delMes(${IX})">Excluir mês</button>
   </div>
   <div class="row" style="margin-top:8px">
     <label style="display:flex;align-items:center;gap:6px;font-size:13px">
-      <input type="checkbox" style="width:auto" ${m.rascunho?"":"checked"} onchange="state.meses[${idx}].rascunho=!this.checked;save();render()">
+      <input type="checkbox" style="width:auto" ${m.rascunho?"":"checked"} onchange="state.meses[${IX}].rascunho=!this.checked;save();render()">
       Incluir este mês nas análises (gráficos, médias, previsão e simulação)
     </label>
     ${m.rascunho?'<span class="pill" style="background:#fef3c7;color:#92400e">rascunho — fora das análises</span>':'<span class="pill teal">contando nas análises</span>'}
   </div>
   <div class="row" style="margin-top:8px">
-    <button class="btn" onclick="puxarTodasPendentes(${idx})" title="Preenche só as contas ainda vazias, cada uma pela sua regra de estimativa, marcando como provisórias. Não altera contas que já têm valor.">↩ Estimar contas vazias (pela regra de cada uma)</button>
-    ${contarProv(m)?`<button class="btn" onclick="confirmarTodas(${idx})">✔ confirmar todos os valores reais</button><span class="pill" style="background:#ffe4e6;color:#be123c">${contarProv(m)} valor(es) provisório(s)</span>`:''}
+    <button class="btn" onclick="puxarTodasPendentes(${IX})" title="Preenche só as contas ainda vazias, cada uma pela sua regra de estimativa, marcando como provisórias. Não altera contas que já têm valor.">↩ Estimar contas vazias (pela regra de cada uma)</button>
+    ${contarProv(m)?`<button class="btn" onclick="confirmarTodas(${IX})">✔ confirmar todos os valores reais</button><span class="pill" style="background:#ffe4e6;color:#be123c">${contarProv(m)} valor(es) provisório(s)</span>`:''}
   </div></div>
   <div class="card"><h3>Renda de ${lbl(m.ym)}</h3><div class="row">
-    <label>Salário líquido <input type="number" step="0.01" value="${m.salario}" onchange="state.meses[${idx}].salario=+this.value;save();render()"></label>
-    <label>Extra/benefícios <input type="number" step="0.01" value="${m.extra}" onchange="state.meses[${idx}].extra=+this.value;save();render()"></label>
-    <label>Vale alimentação <input type="number" step="0.01" value="${m.va}" onchange="state.meses[${idx}].va=+this.value;save();render()"></label>
+    <label>Salário líquido <input type="number" step="0.01" value="${m.salario}" onchange="state.meses[${IX}].salario=+this.value;save();render()"></label>
+    <label>Extra/benefícios <input type="number" step="0.01" value="${m.extra}" onchange="state.meses[${IX}].extra=+this.value;save();render()"></label>
+    <label>Vale alimentação <input type="number" step="0.01" value="${m.va}" onchange="state.meses[${IX}].va=+this.value;save();render()"></label>
   </div><p class="note">Renda considerada = salário + extra (VA fica fora, como na sua planilha). Renda: <b>${fmt(renda(m))}</b> · Contas: <b>${fmt(totalContas(m))}</b> · Sobra: <b class="${sobra(m)>=0?'teal':'rose'}">${fmt(sobra(m))}</b></p></div>
   ${(()=>{const sel=Object.keys(calcSel).filter(k=>calcSel[k]);if(!sel.length)return"";
     const linhas=sel.map(k=>({n:k,v:+m.contas[k]||0}));
@@ -2158,19 +2195,19 @@ function vEditar(){
     <td><select onchange="setTipo('${nn}',this.value==='1');render()"><option value="1" ${tipoOf(n)==='Fixo'?'selected':''}>Fixo</option><option value="0" ${tipoOf(n)==='Variável'?'selected':''}>Variável</option></select></td>
     <td class="n"><input type="number" min="1" max="31" value="${vencDe(n)||''}" placeholder="—" style="width:56px" title="Dia do vencimento (1-31). Deixe vazio se não tem." onchange="if(!state.vencDia)state.vencDia={};var d=+this.value;if(d>=1&&d<=31)state.vencDia['${nn}']=d;else delete state.vencDia['${nn}'];save();render()"></td>
     <td><select style="padding:4px 6px;font-size:12px" onchange="setMetodo('${nn}',this.value)" title="${est>0?'estimativa atual: '+fmt(est):'sem histórico'}">${Object.entries(METODOS).map(([k,lb])=>`<option value="${k}" ${metodoDe(n)===k?"selected":""}>${lb}</option>`).join("")}</select></td>
-    <td class="n"><input type="number" step="0.01" value="${v}" style="${pv?'color:#be123c;font-weight:700;border-color:#fda4af':''}" onchange="state.meses[${idx}].contas['${nn}']=+this.value;setProv(${idx},'${nn}',false)"></td>
-    <td>${pv?`<button class="btn" style="padding:2px 6px" title="Confirmar valor real" onclick="confirmarConta(${idx},'${nn}')">✔</button>`:`<button class="btn" style="padding:2px 6px" title="Estimar por ${METODOS[metodoDe(n)]}${est>0?' ('+fmt(est)+')':''} e marcar provisório" onclick="puxarConta(${idx},'${nn}')">↩</button>`}</td>
-    <td style="white-space:nowrap"><button class="btn" style="padding:2px 6px" title="${parcelaCfg(n)?'Editar parcelamento':'Marcar como parcelada (definir nº de vezes e início)'}" onclick="toggleParc('${nn}')">${edParcOpen[n]?"▲":"⏳"}</button>${det?`<button class="btn" style="padding:2px 6px" title="Detalhar itens da fatura" onclick="toggleDet('${nn}')">${edDetOpen[n]?"▲":"🔍"}</button>`:''}<button class="btn" style="padding:2px 6px" title="${det?'Deixar de tratar como fatura detalhável':'Marcar como fatura detalhável (cartão, empréstimo...)'}" onclick="setDetalhavel('${nn}',${det?'false':'true'})">${det?'★':'☆'}</button><button class="btn danger" style="padding:2px 6px" onclick="delConta(${idx},'${nn}')">✕</button></td></tr>
+    <td class="n"><input type="number" step="0.01" value="${v}" style="${pv?'color:#be123c;font-weight:700;border-color:#fda4af':''}" onchange="state.meses[${IX}].contas['${nn}']=+this.value;setProv(${IX},'${nn}',false)"></td>
+    <td>${pv?`<button class="btn" style="padding:2px 6px" title="Confirmar valor real" onclick="confirmarConta(${IX},'${nn}')">✔</button>`:`<button class="btn" style="padding:2px 6px" title="Estimar por ${METODOS[metodoDe(n)]}${est>0?' ('+fmt(est)+')':''} e marcar provisório" onclick="puxarConta(${IX},'${nn}')">↩</button>`}</td>
+    <td style="white-space:nowrap"><button class="btn" style="padding:2px 6px" title="${parcelaCfg(n)?'Editar parcelamento':'Marcar como parcelada (definir nº de vezes e início)'}" onclick="toggleParc('${nn}')">${edParcOpen[n]?"▲":"⏳"}</button>${det?`<button class="btn" style="padding:2px 6px" title="Detalhar itens da fatura" onclick="toggleDet('${nn}')">${edDetOpen[n]?"▲":"🔍"}</button>`:''}<button class="btn" style="padding:2px 6px" title="${det?'Deixar de tratar como fatura detalhável':'Marcar como fatura detalhável (cartão, empréstimo...)'}" onclick="setDetalhavel('${nn}',${det?'false':'true'})">${det?'★':'☆'}</button><button class="btn danger" style="padding:2px 6px" onclick="delConta(${IX},'${nn}')">✕</button></td></tr>
     ${det&&edDetOpen[n]?`<tr><td colspan="9" style="background:#f8fafc;padding:10px">
       ${(()=>{const its=itensFatura(m,n);const soma=somaItens(m,n);const tot=+m.contas[n]||0;const resto=restoFatura(m,n);const cats=catList();
         return `<div class="flexbet"><b style="font-size:13px">🔍 Itens da fatura ${esc(n)} — ${lbl(m.ym)}</b>
-          <button class="btn primary" style="padding:2px 8px" onclick="addItemFatura(${idx},'${nn}')">+ item</button></div>
+          <button class="btn primary" style="padding:2px 8px" onclick="addItemFatura(${IX},'${nn}')">+ item</button></div>
         ${its.length?`<table style="margin-top:6px"><tr><th>Item</th><th>Categoria</th><th class="n">Valor</th><th></th></tr>
         ${its.map(it=>`<tr>
-          <td><input value="${(it.nome||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:120px;padding:3px 5px;font-size:12px" onchange="var it=state.meses[${idx}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.nome=this.value;save()}"></td>
-          <td><select style="padding:3px 5px;font-size:12px" onchange="var it=state.meses[${idx}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.cat=this.value;save();render()}">${cats.map(c=>`<option value="${esc(c)}" ${c===it.cat?"selected":""}>${esc(c)}</option>`).join("")}</select></td>
-          <td class="n"><input type="number" step="0.01" value="${it.valor}" style="width:95px;padding:3px 5px;font-size:12px" onchange="var it=state.meses[${idx}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.valor=+this.value;save();render()}"></td>
-          <td><button class="btn danger" style="padding:2px 6px" onclick="delItemFatura(${idx},'${nn}','${it.id}')">✕</button></td></tr>`).join("")}</table>`:'<p class="note">Nenhum item ainda. Adicione as compras da fatura que quiser categorizar — o que faltar para fechar o total vira "resto".</p>'}
+          <td><input value="${(it.nome||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:120px;padding:3px 5px;font-size:12px" onchange="var it=state.meses[${IX}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.nome=this.value;save()}"></td>
+          <td><select style="padding:3px 5px;font-size:12px" onchange="var it=state.meses[${IX}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.cat=this.value;save();render()}">${cats.map(c=>`<option value="${esc(c)}" ${c===it.cat?"selected":""}>${esc(c)}</option>`).join("")}</select></td>
+          <td class="n"><input type="number" step="0.01" value="${it.valor}" style="width:95px;padding:3px 5px;font-size:12px" onchange="var it=state.meses[${IX}].itensFatura['${nn}'].find(x=>x.id==='${it.id}');if(it){it.valor=+this.value;save();render()}"></td>
+          <td><button class="btn danger" style="padding:2px 6px" onclick="delItemFatura(${IX},'${nn}','${it.id}')">✕</button></td></tr>`).join("")}</table>`:'<p class="note">Nenhum item ainda. Adicione as compras da fatura que quiser categorizar — o que faltar para fechar o total vira "resto".</p>'}
         <table style="margin-top:6px;font-size:12px;max-width:340px">
           <tr><td>Total da fatura</td><td class="n">${fmt(tot)}</td></tr>
           <tr><td>Itens detalhados (${its.length})</td><td class="n teal">${fmt(soma)}</td></tr>
@@ -2250,9 +2287,9 @@ function vEditar(){
           ${[0,1,2,3,4].map(k=>{const d=new Date(simD+"T00:00:00");d.setDate(d.getDate()+k);const iso=isoData(d);const dk=diasAtraso(n,ymRef,iso);const vk=valorComAtraso(n,ymRef,dk);
             return `<tr${k===0?' style="font-weight:600"':''}><td>${iso.slice(8,10)}/${iso.slice(5,7)}</td><td class="n">${dk}d</td><td class="n" style="color:${dk>0?'#be123c':'#0d9488'}">${fmt(vk)}</td></tr>`;}).join("")}</table>`}
           <div class="row" style="margin-top:8px">
-            <label style="font-size:12px">Valor realmente pago em ${lbl(m.ym)} <input type="number" step="0.01" value="${pr||''}" placeholder="${pi.valor.toFixed(2)}" style="width:110px" onchange="setPagoReal(${idx},'${nn}',+this.value)"></label>
-            ${venc&&temJuros?`<button class="btn primary" style="padding:3px 8px;font-size:12px" title="Grava como pago real E aplica no campo Valor do mês (o orçado guarda a parcela original)" onclick="usarSimulado(${idx},'${nn}',${vFinal.toFixed(2)})">✓ usar simulado e aplicar no mês (${fmt(vFinal)})</button>`:''}
-            ${pr?`<span class="pill" style="${pr>pi.valor+0.005?'background:#ffe4e6;color:#be123c':'background:#ccfbf1;color:#0f766e'}">${pr>pi.valor+0.005?"+"+fmt(pr-pi.valor)+" de juros neste mês":"sem juros"}</span>${Math.abs(pr-(+m.contas[n]||0))>0.005?`<button class="btn" style="padding:2px 8px;font-size:11px" title="O valor do mês (${fmt(+m.contas[n]||0)}) difere do pago real — clique para igualar" onclick="usarSimulado(${idx},'${nn}',${pr})">aplicar no valor do mês</button>`:''}<button class="btn" style="padding:2px 6px;font-size:11px" onclick="setPagoReal(${idx},'${nn}',0)">limpar</button>`:''}
+            <label style="font-size:12px">Valor realmente pago em ${lbl(m.ym)} <input type="number" step="0.01" value="${pr||''}" placeholder="${pi.valor.toFixed(2)}" style="width:110px" onchange="setPagoReal(${IX},'${nn}',+this.value)"></label>
+            ${venc&&temJuros?`<button class="btn primary" style="padding:3px 8px;font-size:12px" title="Grava como pago real E aplica no campo Valor do mês (o orçado guarda a parcela original)" onclick="usarSimulado(${IX},'${nn}',${vFinal.toFixed(2)})">✓ usar simulado e aplicar no mês (${fmt(vFinal)})</button>`:''}
+            ${pr?`<span class="pill" style="${pr>pi.valor+0.005?'background:#ffe4e6;color:#be123c':'background:#ccfbf1;color:#0f766e'}">${pr>pi.valor+0.005?"+"+fmt(pr-pi.valor)+" de juros neste mês":"sem juros"}</span>${Math.abs(pr-(+m.contas[n]||0))>0.005?`<button class="btn" style="padding:2px 8px;font-size:11px" title="O valor do mês (${fmt(+m.contas[n]||0)}) difere do pago real — clique para igualar" onclick="usarSimulado(${IX},'${nn}',${pr})">aplicar no valor do mês</button>`:''}<button class="btn" style="padding:2px 6px;font-size:11px" onclick="setPagoReal(${IX},'${nn}',0)">limpar</button>`:''}
           </div>
           <p class="note" style="margin-top:4px">O valor real pago entra no caixa da <b>Gerenciar sobra</b> e no "Já pago" do <b>Status</b> — assim o dinheiro bate com o extrato mesmo pagando com juros.</p>
         </div>`:''}`;})()}
@@ -2260,7 +2297,7 @@ function vEditar(){
   <div class="row" style="margin-top:10px">
     <input id="ncNome" placeholder="Nova conta (ex.: Seguro carro)" style="flex:1;min-width:160px">
     <input id="ncVal" type="number" step="0.01" placeholder="Valor">
-    <button class="btn primary" onclick="addConta(${idx})">Adicionar</button>
+    <button class="btn primary" onclick="addConta(${IX})">Adicionar</button>
   </div></div>`;
 }
 // cria um mês qualquer (ex.: nov/dez a partir das férias) copiando as contas do mês anterior mais
@@ -3302,7 +3339,7 @@ function transferirEnvelope(id){
 function desfazerTransferencia(id){
   const f=feriasGet(id);if(!f)return;
   if(!confirm("Desfazer a transferência para o envelope? Remove o lançamento do caixa."))return;
-  Object.keys(state.movs).forEach(ym=>{state.movs[ym]=(state.movs[ym]||[]).filter(x=>x._ferias!==id);});
+  Object.keys(state.movs).forEach(ym=>{(state.movs[ym]||[]).forEach(x=>{if(x._ferias===id)marcarApagado(x.id);});state.movs[ym]=(state.movs[ym]||[]).filter(x=>x._ferias!==id);});
   f.envelope.transferido=false;f.envelope.valorTransferido=0;save();render();
 }
 function agendarHospedagem(id,pid){
@@ -3724,10 +3761,12 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO=3;
-const APP_VERSAO_TXT="2026.10.01-4";
+const APP_VERSAO=4;
+const APP_VERSAO_TXT="2026.10.02-1";
+marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
+let primeiraSync=true;
 let syncStatus={tipo:"",msg:""},syncEmCurso=null,syncTimer=null,renderPendente=false;
 function carregarSync(){try{return JSON.parse(localStorage.getItem(KEY_SYNC)||"{}");}catch(e){return{};}}
 function gravarSync(){try{localStorage.setItem(KEY_SYNC,JSON.stringify(sync));}catch(e){}}
@@ -3832,6 +3871,8 @@ async function contaSenhaFamilia(){
   }catch(e){statusSync("erro",e.message);alert(e.message);}
 }
 
+// compara os dados em si (sem carimbo de hora e marcadores de exclusão, que a junção recalcula)
+function mesmoConteudo(x,y){const f=o=>{const c={...o};delete c._atualizadoEm;delete c._apagados;return c;};return iguais(f(x),f(y));}
 // ---- o ciclo: baixa o que há de novo, junta, e sobe se houver mudança local ----
 async function sincronizar(manual){
   if(!syncAtivo())return;
@@ -3846,27 +3887,33 @@ async function sincronizar(manual){
         const tinhaPendente=!!sync.pendente;
         const rem=await fsLer();
         if(rem&&rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app de novo (no computador, recarregue a página) para atualizar — até lá este aparelho não envia nada.");
-        if(rem&&rem.versao!==sync.versao){
+        // 1ª sincronização desta janela: junta com a nuvem mesmo se a versão bate — o que está no
+        // aparelho pode ter sido regravado por uma janela antiga sem que o controle de versão saiba
+        if(rem&&(rem.versao!==sync.versao||primeiraSync)){
           const remoto=migrarEstado(await decifrar(rem));
           const base=sync.versao!=null?lerBase():null;
           // sem base (aparelho novo nesta conta ou recém-atualizado): a nuvem vence os conflitos;
           // deste aparelho só entram registros novos (gastos, meses) que a nuvem ainda não tem
           state=migrarEstado(mesclarEstados(state,remoto,base,base?null:{bVence:true}));reaplicarRenomes();salvarLocal();
+          registrar("recebeu da nuvem (v"+rem.versao+(rem.por?" por "+rem.por:"")+(base?"":", sem base")+")");
           sync.versao=rem.versao;sync.porUltimo=rem.por;gravarSync();renderSeguro();
           if(!tinhaPendente)gravarBase(remoto);
+          if(!mesmoConteudo(state,remoto)){sync.pendente=true;gravarSync();} // a junção trouxe algo daqui que a nuvem não tem
         }
-        if(rem&&!tinhaPendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
+        primeiraSync=false;
+        if(rem&&!sync.pendente){sync.ultimo=Date.now();gravarSync();statusSync("ok");return;}
         const enviado=JSON.stringify(state);
         const d=await cifrar(JSON.parse(enviado));d.salt=rem?rem.salt:sync.salt;d.versao=(rem?rem.versao:0)+1;
         if(d.cifra.length>900000)throw new Error("Os dados passaram do tamanho máximo de um documento. Avise para dividirmos o armazenamento.");
         // 3 tentativas com a checagem; na 4ª (logo depois de baixar e juntar de novo) grava direto
         const w=await fsGravar(d,rem&&rem.updateTime,t===3&&!!rem);
         if(w.conflito){ultimoConflito=w.detalhe;continue;} // outro aparelho gravou no meio: baixa de novo e junta
+        registrar("enviou para a nuvem (v"+d.versao+")");
         sync.versao=d.versao;sync.pendente=JSON.stringify(state)!==enviado;sync.ultimo=Date.now();sync.porUltimo=sync.email;gravarSync();gravarBase(JSON.parse(enviado));statusSync("ok");
         if(sync.pendente){clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),1500);}return;
       }
       throw new Error("Não consegui gravar na nuvem (resposta do Firebase: "+ultimoConflito+"). Tente de novo; se repetir, mande um print.");
-    }catch(e){statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
+    }catch(e){registrar("erro: "+e.message);statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
     finally{syncEmCurso=null;}
   })();
   return syncEmCurso;
@@ -3911,6 +3958,10 @@ function cardConta(){
       ${syncStatus.tipo==="erro"?lin("<b style='color:#be123c'>⚠ "+syncStatus.msg+"</b>"):""}
       <div class="row" style="margin-top:6px"><button class="btn primary" onclick="sincronizar(true).then(()=>render())">Sincronizar agora</button><button class="btn" onclick="contaSair()">Sair</button></div>`;
   }
+  const log=lerLog().slice().reverse();
+  if(log.length)corpo+=`<details style="margin-top:8px"><summary class="note" style="cursor:pointer">🔎 Diagnóstico — últimos ${log.length} eventos neste aparelho</summary>
+    <div style="overflow-x:auto"><table><tr><th>Quando</th><th>O quê</th><th>Dados</th></tr>${log.map(x=>`<tr><td>${new Date(x.t).toLocaleString("pt-BR")}</td><td>${esc(x.ev)}</td><td>${esc(x.r)}</td></tr>`).join("")}</table></div>
+    <p class="note">Se algo sumir, mande um print desta lista: ela mostra quem gravou o quê e quando.</p></details>`;
   return `<div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3 style="margin:0">☁️ Conta e sincronização</h3><span class="note" style="margin:0">versão do app: <b>${APP_VERSAO_TXT}</b></span></div>${corpo}</div>`;
 }
 if(typeof window!=="undefined"&&window.addEventListener){
