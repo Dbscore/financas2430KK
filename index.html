@@ -386,9 +386,16 @@ if(typeof window!=="undefined"&&window.addEventListener){window.addEventListener
 function salvarLocal(){try{gravarLS();backupRotativo();}catch(e){}}
 // carimbo por mês: cada mês que o USUÁRIO alterou ganha _em = agora (usado na junção quando o mesmo
 // mês foi mexido em dois aparelhos). Só nas gravações de edição (save/salvarJa), não ao receber da nuvem.
+// Mês recém-CRIADO (não existia) ganha só _criado: criar/copiar não é edição — senão um mês criado
+// num aparelho com dados velhos ganhava do mesmo mês já editado em outro aparelho.
+// A comparação é com o estado anterior JÁ MIGRADO, para campos acrescentados pela migração não contarem como edição.
 function carimbarMeses(){
-  let ant={};try{(JSON.parse(lsConhecido||"{}").meses||[]).forEach(m=>{const c={...m};delete c._em;ant[m.ym]=JSON.stringify(c);});}catch(e){}
-  const agora=Date.now();(state.meses||[]).forEach(m=>{const c={...m};delete c._em;if(ant[m.ym]!==JSON.stringify(c))m._em=agora;});
+  const limpo=m=>{const c={...m};delete c._em;delete c._criado;return c;};
+  let ant=null;try{if(lsConhecido){ant={};(migrarEstado(JSON.parse(lsConhecido)).meses||[]).forEach(m=>{ant[m.ym]=limpo(m);});}}catch(e){ant=null;}
+  const agora=Date.now();
+  (state.meses||[]).forEach(m=>{
+    if(!ant||!(m.ym in ant)){if(!m._criado)m._criado=agora;return;}
+    if(!iguais(ant[m.ym],limpo(m)))m._em=agora;});
 }
 function gravarLS(edicao){
   if(janelaVelha())return;
@@ -768,6 +775,10 @@ function vPrimeiroUso(){
 function render(){
   killCharts();renderTabs();renderAlerta();
   const v=document.getElementById("view");
+  const esperando=typeof esperandoNuvem!=="undefined"&&esperandoNuvem;
+  if(v&&v.style){v.style.pointerEvents=esperando?"none":"";v.style.opacity=esperando?".45":"";}
+  const al=document.getElementById("alerta");
+  if(esperando&&al)al.innerHTML='<div class="card" style="border-color:var(--indigo)"><b>⏳ Buscando as alterações dos outros aparelhos…</b><p class="note" style="margin-top:4px">Leva alguns segundos. A tela libera sozinha — assim você não edita dados desatualizados.</p></div>';
   if(!meses().length&&tab!=="backup"&&tab!=="ferias"){v.innerHTML=renderAvisoCorrompido()+vPrimeiroUso();return;} // sem meses não há gráfico para desenhar
   if(tab==="visao")v.innerHTML=renderAvisoCorrompido()+vVisao();
   if(tab==="sobras")v.innerHTML=vSobras();
@@ -3783,11 +3794,15 @@ const FB_DOC="casas/principal";
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
 const APP_VERSAO=4;
-const APP_VERSAO_TXT="2026.10.02-6";
+const APP_VERSAO_TXT="2026.10.02-7";
 marcarVersaoLocal();
 const KEY_SYNC=KEY+"__sync";
 let sync=carregarSync();
 let primeiraSync=true,aparelhoAvisado=false;
+// Ao abrir com a conta conectada, a tela fica bloqueada até a 1ª sincronização (no máximo ~12 s):
+// assim ninguém edita os dados velhos deste aparelho (ex.: cria um mês que já existe na nuvem).
+let esperandoNuvem=false;
+function liberarTela(){if(esperandoNuvem){esperandoNuvem=false;if(typeof render==="function")render();}}
 // ---- Aparelhos: cada navegador tem um id; ao enviar, ele se registra em state._aparelhos (vai
 // criptografado junto com os dados). Assim o card da conta mostra quem usa e quem enviou por último.
 const KEY_APARELHO=KEY+"__aparelho";
@@ -3964,8 +3979,8 @@ async function sincronizar(manual){
         if(sync.pendente){clearTimeout(syncTimer);syncTimer=setTimeout(()=>sincronizar(),1500);}return;
       }
       throw new Error("Não consegui gravar na nuvem (resposta do Firebase: "+ultimoConflito+"). Tente de novo; se repetir, mande um print.");
-    }catch(e){registrar("erro: "+e.message);statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
-    finally{syncEmCurso=null;}
+    }catch(e){registrar("erro: "+e.message);liberarTela();statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
+    finally{syncEmCurso=null;liberarTela();}
   })();
   return syncEmCurso;
 }
@@ -4290,6 +4305,7 @@ function after(){
     }
   }
 }
+if(syncAtivo()&&!(typeof navigator!=="undefined"&&navigator.onLine===false)){esperandoNuvem=true;setTimeout(liberarTela,12000);}
 aplicarTema();aplicarOlho();render();statusSync("");sincronizar();
 </script>
 <script>if("serviceWorker" in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js");</script>
