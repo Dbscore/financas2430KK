@@ -866,16 +866,37 @@ function abrirLancamento(){
   document.getElementById("folhaLancConteudo").innerHTML=`<div class="flexbet"><h3 style="margin:0">Lançar</h3><button class="btn" onclick="fecharLancamento()">✕</button></div>
     <div class="row" style="margin-top:10px"><button class="btn primary" id="lqGasto" onclick="lqTipo('gasto')">Gasto</button><button class="btn" id="lqRenda" onclick="lqTipo('renda')">Recebimento</button></div>
     <label>Descrição<input id="lqNome" placeholder="ex.: mercado, posto, sorvete" oninput="lqSugerirCat()"></label>
-    <label>Valor (R$)<input id="lqValor" type="number" step="0.01" inputmode="decimal" placeholder="0,00"></label>
-    <label>Data<input id="lqData" type="date" value="${hoje}"></label>
+    <label>Valor (R$)<input id="lqValor" type="number" step="0.01" inputmode="decimal" placeholder="0,00" oninput="lqPrevia()"></label>
+    <label>Data<input id="lqData" type="date" value="${hoje}" onchange="lqPrevia()"></label>
     <label id="lqCatWrap">Categoria<select id="lqCat"><option value="auto">🎯 automática pela descrição</option>${categoriasDeGasto().map(c=>`<option>${esc(c)}</option>`).join("")}</select></label>
-    <label>Onde lançar<select id="lqOnde">${op.join("")}</select></label>
+    <label>Onde lançar<select id="lqOnde" onchange="lqPrevia()">${op.join("")}</select></label>
+    <div id="lqSaldo" class="note" style="margin-top:10px;padding:8px 10px;border-radius:10px;background:var(--card2);border:1px solid var(--border)"></div>
     <button class="btn primary" style="width:100%;margin-top:14px" onclick="salvarLancamento()">Salvar</button>`;
-  lqTipoAtual="gasto";document.getElementById("folhaLanc").classList.add("aberta");
+  lqTipoAtual="gasto";document.getElementById("folhaLanc").classList.add("aberta");lqPrevia();
   setTimeout(()=>{const e=document.getElementById("lqNome");if(e&&e.focus)e.focus();},50);
 }
 let lqTipoAtual="gasto";
-function lqTipo(t){lqTipoAtual=t;const g=document.getElementById("lqGasto"),r=document.getElementById("lqRenda"),w=document.getElementById("lqCatWrap");
+// "check-in" do lançamento: mostra a sobra em conta agora e quanto fica depois deste lançamento
+// (gasto de viagem: mostra o envelope da viagem, que é de onde ele sai). Só lê — não muda nenhum cálculo.
+function previaLancamento(onde,data,tipo,valor){
+  if(onde&&onde.startsWith("v:")){const[,fid,pid]=onde.split(":");const f=feriasGet(fid);if(!f)return null;
+    const gasto=r2(((f.viagem&&f.viagem.gastos)||[]).filter(g=>!g.planoId||g.planoId===pid).reduce((s,g)=>s+(+g.valor||0),0));
+    const resta=r2(envelopeTetoFerias(f)-gasto),depois=r2(resta-(tipo==="renda"?-valor:valor));
+    return{viagem:true,agora:resta,depois,txt:"🏖️ Envelope da viagem: resta "+fmt(resta)+(valor?" → depois deste lançamento: <b>"+fmt(depois)+"</b>":"")+" <span style='opacity:.8'>(gasto de viagem sai do envelope, não da sobra do mês)</span>"};}
+  const ym=(data||hojeISO()).slice(0,7);
+  if(!meses().some(m=>m.ym===ym))return{semMes:true,txt:"O mês "+lbl(ym)+" ainda não existe em Editar dados — o lançamento fica guardado e entra na conta quando o mês for criado."};
+  const C=caixaReal(ym),depois=r2(C.saldoAgora+(tipo==="renda"?valor:-valor));
+  return{agora:C.saldoAgora,depois,ym,txt:"💰 Sobra em conta agora ("+lbl(ym)+"): <b>"+fmt(C.saldoAgora)+"</b>"+(valor?" → depois deste lançamento: <b class='"+(depois>=0?"teal":"rose")+"'>"+fmt(depois)+"</b>":"")};
+}
+function lqPrevia(){const el=document.getElementById("lqSaldo");if(!el)return;
+  const v=+((document.getElementById("lqValor")||{}).value)||0,d=(document.getElementById("lqData")||{}).value,o=(document.getElementById("lqOnde")||{}).value||"mes";
+  const p=previaLancamento(o,dataValida(d)?d:hojeISO(),lqTipoAtual,v);el.innerHTML=p?p.txt:"";}
+// aviso rápido que some sozinho (não bloqueia a tela)
+function avisoRapido(html){const el=document.getElementById("avisoRapido")||(()=>{const d=document.createElement("div");d.id="avisoRapido";
+    d.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom));z-index:80;max-width:92vw;background:var(--card);color:var(--txt);border:1px solid var(--teal);border-radius:12px;padding:10px 14px;box-shadow:0 8px 24px var(--sombra);font-size:14px";
+    document.body.appendChild(d);return d;})();
+  if(!el.style)return;el.innerHTML=html;el.style.display="block";clearTimeout(avisoRapido.t);avisoRapido.t=setTimeout(()=>{el.style.display="none";},5000);}
+function lqTipo(t){lqTipoAtual=t;lqPrevia&&setTimeout(lqPrevia,0);const g=document.getElementById("lqGasto"),r=document.getElementById("lqRenda"),w=document.getElementById("lqCatWrap");
   if(g)g.className="btn"+(t==="gasto"?" primary":"");if(r)r.className="btn"+(t==="renda"?" primary":"");if(w&&w.style)w.style.display=t==="renda"?"none":"";}
 function lqSugerirCat(){const n=document.getElementById("lqNome").value,s=document.getElementById("lqCat");const c=classificaMov(n);
   if(s&&s.options&&s.options[0])s.options[0].text=c?"🎯 automática: "+c:"🎯 automática pela descrição";}
@@ -891,6 +912,9 @@ function salvarLancamento(){
     f.viagem.planoAtivoId=pid;f.viagem.gastos.push({id:uid(),nome,valor:lqTipoAtual==="renda"?-valor:valor,cat,data,planoId:pid});}
   else{const ym=data.slice(0,7);if(!state.movs[ym])state.movs[ym]=[];state.movs[ym].push({id:uid(),nome,valor,tipo:lqTipoAtual,cat,dia:+data.slice(8,10)});}
   fecharLancamento();save();render();
+  // check-in: quanto ficou depois do lançamento
+  const p=previaLancamento(onde,data,lqTipoAtual,0);
+  if(p&&!p.semMes)avisoRapido("✔ Lançado: "+esc(nome)+" "+(lqTipoAtual==="renda"?"+":"−")+fmt(valor)+"<br>"+(p.viagem?"🏖️ Resta no envelope da viagem: <b>"+fmt(p.agora)+"</b>":"💰 Sobra em conta agora: <b class='"+(p.agora>=0?"teal":"rose")+"'>"+fmt(p.agora)+"</b>"));
 }
 // ============ VISÃO GERAL ============
 function vVisao(){
@@ -916,7 +940,7 @@ function vVisao(){
   const agNovo=novos.reduce((s,f)=>s+f.valor,0);
   const envelope=rendaPrev-fixPrev-alvoS-agNovo;
   const margem=envelope-varPrev;
-  return cardFeriasHoje()+`
+  return cardFeriasHoje()+cardSobraAgora()+`
   <div class="card"><div class="row">
     <span>Período:</span>
     <select onchange="state.visSel=this.value;save();render()">
@@ -1022,6 +1046,16 @@ function caixaReal(ym){
     saldoFim:r2(saldoAgora-aPagar),          // projeção fim do mês: todas as contas pagas
     contasTot
   };
+}
+// card rápido do Início: a sobra em conta agora do mês corrente (ou do último mês cadastrado), sem entrar em Mês → Gerenciar sobra
+function cardSobraAgora(){
+  const all=meses();if(!all.length)return"";
+  const ym=all.some(m=>m.ym===mesAtualYm())?mesAtualYm():all[all.length-1].ym,C=caixaReal(ym);
+  return `<div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3 style="margin:0">💰 Sobra em conta agora — ${lbl(ym)}</h3>
+      <b class="${C.saldoAgora>=0?"teal":"rose"}" style="font-size:20px">${fmt(C.saldoAgora)}</b></div>
+    <p class="note" style="margin-top:4px">Falta pagar ${fmt(C.aPagar)} em contas · fim do mês, com tudo pago: <b class="${C.saldoFim>=0?"teal":"rose"}">${fmt(C.saldoFim)}</b></p>
+    <div class="row" style="margin-top:6px"><button class="btn primary" onclick="abrirLancamento()">+ Lançar</button>
+      <button class="btn" onclick="sobSel='${ym}';go('sobras')">ver detalhes →</button></div></div>`;
 }
 function setSaldoInicial(ym,v){if(!state.saldoInicial)state.saldoInicial={};if(v===""||v==null)delete state.saldoInicial[ym];else state.saldoInicial[ym]=+v;save();render();}
 function conciliar(ym){
@@ -3930,7 +3964,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.10.02-13";
+const APP_VERSAO_TXT="2026.10.03-1";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
