@@ -893,7 +893,8 @@ function lqPrevia(){const el=document.getElementById("lqSaldo");if(!el)return;
   const p=previaLancamento(o,dataValida(d)?d:hojeISO(),lqTipoAtual,v);el.innerHTML=p?p.txt:"";}
 // aviso rápido que some sozinho (não bloqueia a tela)
 function avisoRapido(html){const el=document.getElementById("avisoRapido")||(()=>{const d=document.createElement("div");d.id="avisoRapido";
-    d.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom));z-index:80;max-width:92vw;background:var(--card);color:var(--txt);border:1px solid var(--teal);border-radius:12px;padding:10px 14px;box-shadow:0 8px 24px var(--sombra);font-size:14px";
+    d.setAttribute("role","status");d.setAttribute("aria-live","polite"); // leitor de tela anuncia; pointer-events:none = o aviso nunca engole o toque no que está por baixo
+    d.style.cssText="pointer-events:none;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom));z-index:80;max-width:92vw;background:var(--card);color:var(--txt);border:1px solid var(--teal);border-radius:12px;padding:10px 14px;box-shadow:0 8px 24px var(--sombra);font-size:14px";
     document.body.appendChild(d);return d;})();
   if(!el.style)return;el.innerHTML=html;el.style.display="block";clearTimeout(avisoRapido.t);avisoRapido.t=setTimeout(()=>{el.style.display="none";},5000);}
 function lqTipo(t){lqTipoAtual=t;lqPrevia&&setTimeout(lqPrevia,0);const g=document.getElementById("lqGasto"),r=document.getElementById("lqRenda"),w=document.getElementById("lqCatWrap");
@@ -3964,7 +3965,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.24-1";
+const APP_VERSAO_TXT="2026.11.25-1";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4333,7 +4334,7 @@ function resetar(){if(confirm("Isso apaga TODOS os dados deste navegador e volta
 // continuam sendo desenhadas e sincronizadas por baixo, sem nenhuma mudança). Os dois módulos novos
 // desenham em #cpApp, fora da área das finanças. O botão ⌂ (ou o "voltar" do celular) traz de volta para cá.
 const HUB={};
-(function(HUB){
+try{(function(HUB){
 "use strict";
 let atual="hub";
 HUB.atual=()=>atual;
@@ -4348,6 +4349,8 @@ const CSS=`
 body.modo-hub .wrap,body.modo-hub #fab,body.modo-hub #cpApp{display:none!important;}
 body.modo-cp .wrap,body.modo-cp #fab,body.modo-cp #hub{display:none!important;}
 body.modo-casa #hub,body.modo-casa #cpApp{display:none!important;}
+body.modo-cp #folhaLanc,body.modo-hub #folhaLanc{display:none!important;}
+.hub-up{display:block;font-size:12px;margin-top:4px;opacity:.9;}
 #cpApp{max-width:1000px;margin:0 auto;} #cpApp select{max-width:100%;} #cpApp label select{display:block;width:100%;margin-top:2px;}
 #cpApp a.btn{text-decoration:none;display:inline-block;color:var(--txt);font-size:13px;font-weight:600;padding:7px 12px;border:1px solid var(--campoBorda);border-radius:8px;background:var(--campo);}
 .bp-info .pill{display:inline-block;margin:0 4px 3px 0;white-space:nowrap;}
@@ -4390,29 +4393,48 @@ HUB.iniciar=function(){
   const c=document.createElement("div");c.id="cpApp";document.body.appendChild(c);
   // botão ⌂ no topo das finanças (só acrescenta um botão; nada das finanças muda)
   const topo=document.querySelector(".wrap .topo");
-  if(topo){const b=document.createElement("button");b.className="icone-btn";b.title="Voltar ao início";b.textContent="⌂";b.onclick=()=>HUB.mostrar();topo.insertBefore(b,topo.firstChild);}
+  if(topo){const b=document.createElement("button");b.className="icone-btn";b.title="Voltar ao início";b.setAttribute("aria-label","Voltar ao início");b.textContent="⌂";b.onclick=()=>HUB.mostrar();topo.insertBefore(b,topo.firstChild);}
   window.addEventListener("popstate",()=>{if(atual!=="hub")HUB.mostrar(true,true);});
+  // a tela inicial mostra números das finanças (sobra em conta): quando as finanças redesenham (ex.: chegou a sincronização),
+  // ela também. Só ENVOLVE a função render() — nada dentro dela muda.
+  try{const r0=render;render=function(){const x=r0.apply(this,arguments);if(atual==="hub"){try{HUB.mostrar(true,true);}catch(e){}}return x;};}catch(e){}
   HUB.mostrar(true,true);
   if(CP.syncAtivo())CP.sincronizar();
 };
 function modo(m){const b=document.body.classList;["modo-hub","modo-cp","modo-casa"].forEach(x=>b.remove(x));b.add(m);}
-// resumo de cada caixinha (só leitura)
-function infoCasa(){try{const ms=meses();if(!ms.length)return"Renda, contas, férias, metas e backup";
-    const ym=mesAtualYm(),m=ms.find(x=>x.ym===ym)?ym:ms[ms.length-1].ym;const C=caixaReal(m);
-    return"💰 Sobra em conta agora ("+lbl(m)+"): <b>"+fmt(C.saldoAgora)+"</b>";}catch(e){return"Renda, contas, férias, metas e backup";}}
-function infoLista(){try{const ls=CP.listasAbertas(),ym=CP.ymAtual(),r=CP.resumoMes(ym);
-    const l=ls[0];let t=l?`${esc(l.nome)}: <b>${CP.itensDa(l.id).filter(i=>i.estado==="pego").length}/${CP.itensDa(l.id).length}</b> pegos`+(ls.length>1?` · +${ls.length-1} lista(s)`:""):"Nenhuma lista aberta";
-    t+="<br>🧾 "+lbl(ym)+": "+fmt(r.total)+" em "+r.n+" compra(s)"+(r.vaSaldo!=null?" · VA restante <b>"+fmt(r.vaSaldo)+"</b>":"");return t;}catch(e){return"Lista, nota fiscal, histórico e VA";}}
-HUB.mostrar=function(semHistorico){
-  if(atual==="lista"||atual==="busca"){try{CP.fecharCamera();}catch(e){}}
-  atual="hub";modo("modo-hub");try{CP.vivo(0);}catch(e){}
-  const h=document.getElementById("hub");if(!h)return;
-  h.innerHTML=`<div class="hub-wrap"><p class="eyebrow">Família</p><h1>O que vamos fazer?</h1><p class="hub-sub">Escolha uma opção. Tudo fica salvo e sincronizado entre os aparelhos.</p>
-    <button class="hub-card" onclick="HUB.abrir('casa')"><span class="hub-ico" style="background:var(--pillTeal)">🏠</span><span><b>Contas Casa</b><span class="hub-info">${infoCasa()}</span></span></button>
-    <button class="hub-card" onclick="HUB.abrir('lista')"><span class="hub-ico" style="background:#fef3c7">🛒</span><span><b>Lista de compras</b><span class="hub-info">${infoLista()}</span></span></button>
-    <button class="hub-card" onclick="HUB.abrir('busca')"><span class="hub-ico" style="background:#e0e7ff">🔎</span><span><b>Busca de produto</b><span class="hub-info">Melhores preços perto de você — valor e distância${BP.st.termo?"<br>última busca: "+esc(BP.st.termo):""}</span></span></button>
-    <p class="hub-rod">${esc(CP.textoSync())} · versão ${esc(APP_VERSAO_TXT)}</p></div>`;
-  if(window.scrollTo)window.scrollTo(0,0);};
+// se algo der errado na tela inicial, as finanças aparecem como sempre (a tela inicial NUNCA pode ser a única porta)
+function voltarParaFinancas(e){try{if(typeof console!=="undefined")console.error(e);}catch(x){}
+  atual="casa";try{const h=document.getElementById("hub");if(h)h.remove();}catch(x){}try{modo("modo-casa");}catch(x){}try{render();}catch(x){}}
+HUB.voltarParaFinancas=voltarParaFinancas;
+const hhmm=t=>new Date(t).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+const aguardando=()=>{try{return typeof esperandoNuvem!=="undefined"&&esperandoNuvem;}catch(e){return false;}};
+// resumo de cada caixinha (só leitura) + "atualizado às"
+function infoCasa(){let t;try{const ms=meses();
+    if(aguardando())t="💰 Sobra em conta agora: <b>atualizando…</b>"; // não mostra o saldo velho enquanto a nuvem não respondeu
+    else if(!ms.length)t="Renda, contas, férias, metas e backup";
+    else{const ym=mesAtualYm(),m=ms.find(x=>x.ym===ym)?ym:ms[ms.length-1].ym;const C=caixaReal(m);
+      t="💰 Sobra em conta agora ("+lbl(m)+"): <b>"+fmt(C.saldoAgora)+"</b>";}}catch(e){t="Renda, contas, férias, metas e backup";}
+  let up="";try{up=!syncAtivo()?"📴 só neste aparelho":aguardando()?"⏳ buscando a última versão…":sync.ultimo?"☁️ atualizado às "+hhmm(sync.ultimo):"";}catch(e){}
+  return t+(up?'<span class="hub-up">'+up+'</span>':"");}
+function infoLista(){let t;try{const ls=CP.listasAbertas(),ym=CP.ymAtual(),r=CP.resumoMes(ym);
+    const l=ls[0];t=l?`${esc(l.nome)}: <b>${CP.itensDa(l.id).filter(i=>i.estado==="pego").length}/${CP.itensDa(l.id).length}</b> pegos`+(ls.length>1?` · +${ls.length-1} lista(s)`:""):"Nenhuma lista aberta";
+    t+="<br>🧾 "+lbl(ym)+": "+fmt(r.total)+" em "+r.n+" compra(s)"+(r.vaSaldo!=null?" · VA restante <b>"+fmt(r.vaSaldo)+"</b>":"");}catch(e){t="Lista, nota fiscal, histórico e VA";}
+  let up="";try{up=!CP.syncAtivo()?"📴 só neste aparelho":CP.sync.ultimo?"☁️ atualizado às "+hhmm(CP.sync.ultimo):"";}catch(e){}
+  return t+(up?'<span class="hub-up">'+up+'</span>':"");}
+HUB.mostrar=function(semHistorico,manter){
+  try{
+    if(atual==="lista"||atual==="busca"){try{CP.fecharCamera();}catch(e){}}
+    atual="hub";modo("modo-hub");try{CP.vivo(0);}catch(e){}
+    try{if(typeof fecharLancamento==="function")fecharLancamento();}catch(e){} // a folha "+ Lançar" das finanças não pode ficar aberta por baixo
+    const h=document.getElementById("hub");if(!h)return;
+    let rodape="";try{rodape=(syncAtivo()?"Tudo fica salvo e sincronizado entre os aparelhos.":"Salvo só neste aparelho — para sincronizar, entre na conta em Contas Casa → Mais → Backup.")+" · versão "+esc(APP_VERSAO_TXT);}catch(e){rodape="versão "+esc(APP_VERSAO_TXT);}
+    h.innerHTML=`<div class="hub-wrap"><p class="eyebrow">Família</p><h1>O que vamos fazer?</h1><p class="hub-sub">Escolha uma opção.</p>
+      <button class="hub-card" onclick="HUB.abrir('casa')"><span class="hub-ico" aria-hidden="true" style="background:var(--pillTeal)">🏠</span><span><b>Contas Casa</b><span class="hub-info">${infoCasa()}</span></span></button>
+      <button class="hub-card" onclick="HUB.abrir('lista')"><span class="hub-ico" aria-hidden="true" style="background:#fef3c7">🛒</span><span><b>Lista de compras</b><span class="hub-info">${infoLista()}</span></span></button>
+      <button class="hub-card" onclick="HUB.abrir('busca')"><span class="hub-ico" aria-hidden="true" style="background:#e0e7ff">🔎</span><span><b>Busca de produto</b><span class="hub-info">Melhores preços perto de você — valor e distância${BP.st.termo?"<br>última busca: "+esc(BP.st.termo):""}</span></span></button>
+      <p class="hub-rod">${rodape}</p></div>`;
+    if(!manter&&window.scrollTo)window.scrollTo(0,0);
+  }catch(e){voltarParaFinancas(e);}};
 HUB.abrir=function(q){
   if(atual==="hub"&&history.pushState)try{history.pushState({tela:q},"");}catch(e){}
   atual=q==="casa"?"casa":q;
@@ -4421,7 +4443,7 @@ HUB.abrir=function(q){
     if(q==="lista"){CP.render();CP.sincronizar().then(()=>{if(atual==="lista")CP.renderFundo();});}
     else BP.render();}
   if(window.scrollTo)window.scrollTo(0,0);};
-})(HUB);
+})(HUB);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("44: "+e.message);}
 
 // ============ COMPRAS — núcleo de dados (Lista de compras e Busca de produto) ============
 // Módulo SEPARADO das finanças ("Contas Casa"):
@@ -4433,11 +4455,16 @@ HUB.abrir=function(q){
 // Junção entre aparelhos: cada registro (lista, item, compra, produto, mercado) tem carimbo próprio (_em);
 // vale o mais recente. Apagar = marcador (_del), para não "voltar" ao sincronizar.
 const CP={};
-(function(CP){
+try{(function(CP){
 "use strict";
 const CHAVE=KEY+"__compras", CHAVE_EU=KEY+"__compras_eu", CHAVE_AUTO=KEY+"__compras_auto";
 const COLECOES=["listas","itens","produtos","mercados","compras","config"];
-const ID_OK=/^[A-Za-z0-9_-]{1,48}$/;
+// ids: 1 a 48 caracteres seguros; NUNCA __proto__/constructor/prototype (um id assim, vindo de um backup ou da nuvem,
+// chegava a escrever em Object.prototype e a fundir os meses das finanças)
+const ID_OK=/^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_-]{1,48}$/;
+const TEM=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
+// dicionário sem protótipo: chaves vindas de texto do usuário/nota ("__proto__", "constructor") viram chaves comuns
+const mapa=()=>Object.create(null);
 const vazio=()=>({_v:1,listas:{},itens:{},produtos:{},mercados:{},compras:{},config:{}});
 CP.COLECOES=COLECOES;CP.vazio=vazio;CP.ID_OK=ID_OK;
 
@@ -4456,22 +4483,35 @@ function numBR(t){t=String(t??"").trim().replace(/\s/g,"");if(!t)return 0;
 function estavel(o){if(o===null||typeof o!=="object")return JSON.stringify(o);
   if(Array.isArray(o))return"["+o.map(estavel).join(",")+"]";
   return"{"+Object.keys(o).sort().map(k=>JSON.stringify(k)+":"+estavel(o[k])).join(",")+"}";}
-Object.assign(CP,{novoId,r2,hoje,ymDe,dias,norm,numBR,estavel});
+Object.assign(CP,{novoId,r2,hoje,ymDe,dias,norm,numBR,estavel,mapa,TEM});
 
 // ---------- quem usa este aparelho (para "pegou: fulano") ----------
 CP.eu=function(){let nome="";try{nome=localStorage.getItem(CHAVE_EU)||"";}catch(e){}
   let id="ap-sem-id";try{id=idAparelho();}catch(e){}
   if(!nome){try{nome=nomeAparelho().split(" · ")[0];}catch(e){nome="aparelho";}}
   return{id,nome};};
+CP.nomeDefinido=function(){try{return!!localStorage.getItem(CHAVE_EU);}catch(e){return true;}};
 CP.definirEu=function(nome){nome=String(nome||"").trim().slice(0,30);try{if(nome)localStorage.setItem(CHAVE_EU,nome);else localStorage.removeItem(CHAVE_EU);}catch(e){}};
 
 // ---------- validação: tudo que vem da nuvem/arquivo passa por aqui ----------
+const TXT=(r,k)=>{if(r[k]!=null&&typeof r[k]!=="string")r[k]=String(r[k]);};
+const LISTA=(r,k)=>{if(!Array.isArray(r[k]))r[k]=[];};
+const ANO_2100=4102444800000; // só descarta carimbo ABSURDO (não "agora+1 dia": um relógio adiantado não pode ganhar de todos)
+// um registro com tipo errado (versão antiga com bug, backup estranho) não pode travar as telas em todos os aparelhos
+function limpar(c,r){const x=Object.assign({},r);
+  x._em=Math.min(Math.max(+x._em||0,0),ANO_2100);if(x._por!=null)TXT(x,"_por");
+  if(x._del)return x;
+  if(c==="compras"){LISTA(x,"itens");x.itens=x.itens.filter(i=>i&&typeof i==="object"&&!Array.isArray(i));["data","pagamento","mercadoId","chave","listaId"].forEach(k=>TXT(x,k));}
+  if(c==="produtos"){LISTA(x,"apelidos");LISTA(x,"cods");x.apelidos=x.apelidos.map(String);x.cods=x.cods.map(String);["nome","secao","un"].forEach(k=>TXT(x,k));}
+  if(c==="listas"||c==="itens"||c==="mercados"){["nome","secao","un","estado","status","listaId","produtoId","apelido","rede","cnpj","endereco"].forEach(k=>TXT(x,k));}
+  if(c==="config"){LISTA(x,"anos");x.anos=x.anos.map(String);TXT(x,"worker");if(!x.ofertas||typeof x.ofertas!=="object")x.ofertas={};}
+  return x;}
 function normalizar(o){
-  const d=vazio();if(!o||typeof o!=="object")return d;
+  const d=vazio();if(!o||typeof o!=="object"||Array.isArray(o))return d;
   COLECOES.forEach(c=>{const src=o[c];if(!src||typeof src!=="object"||Array.isArray(src))return;
     for(const[k,r]of Object.entries(src)){
       if(!ID_OK.test(k)||!r||typeof r!=="object"||Array.isArray(r)||r.id!==k)continue;
-      d[c][k]=r;}});
+      try{d[c][k]=limpar(c,r);}catch(e){}}});
   return d;}
 CP.normalizar=normalizar;
 
@@ -4489,29 +4529,41 @@ CP.mesclar=mesclar;
 // ---------- dados em memória + gravação no aparelho ----------
 let D=null;
 function lerLS(){try{const t=localStorage.getItem(CHAVE);return t?JSON.parse(t):null;}catch(e){return null;}}
-CP.dados=function(){if(!D)D=normalizar(lerLS());return D;};
-CP.substituir=function(novo){D=normalizar(novo);gravarLS();};
-function gravarLS(){
-  try{localStorage.setItem(CHAVE,JSON.stringify(D));}catch(e){CP.erroGravar=e.message;}
-  backupDoDia();}
+CP.dados=function(){if(!D){let cru=null;try{cru=localStorage.getItem(CHAVE);}catch(e){}
+    let j=null;try{j=cru?JSON.parse(cru):null;}catch(e){}D=normalizar(j);if(cru)copiaAoAbrir(cru);}return D;};
+CP.substituir=function(novo){const ls=lerLS();D=ls?mesclar(normalizar(novo),ls):normalizar(novo);gravarLS();};
+// Gravar no aparelho. O localStorage é UM SÓ para as finanças e para as compras (~5 milhões de caracteres): se encher, as compras
+// não podem tirar o espaço das finanças. Se a gravação falhar, o app libera sozinho o que é dispensável (cópias automáticas,
+// registro de eventos, cache de mapas) e tenta de novo; se ainda assim não couber, avisa na tela (CP.erroGravar) em vez de falhar em silêncio.
+function liberarEspaco(){[CHAVE_AUTO,KEY+"__compras_log",KEY+"__busca_osm"].forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});}
+function gravarLS(){let s;
+  try{s=JSON.stringify(D);}catch(e){CP.erroGravar="não consegui preparar os dados para gravar";return;}
+  try{localStorage.setItem(CHAVE,s);CP.erroGravar="";return;}catch(e){}
+  liberarEspaco();CP.liberou=Date.now();
+  try{localStorage.setItem(CHAVE,s);CP.erroGravar="";}
+  catch(e){CP.erroGravar="A memória do aparelho está cheia: as compras novas NÃO estão sendo salvas aqui. Exporte um backup (Ajustes) e avise para arquivarmos o histórico antigo.";}}
+CP.tamanho=function(){let compras=0,total=0;try{compras=(localStorage.getItem(CHAVE)||"").length;
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);total+=k.length+(localStorage.getItem(k)||"").length;}}catch(e){}
+  return{compras,total,limite:5000000};};
 // grava juntando antes com o que outra janela do mesmo navegador possa ter gravado
-CP.gravar=function(){const ls=lerLS();if(ls)D=mesclar(D,ls);gravarLS();if(typeof CP.aoGravar==="function")CP.aoGravar();};
+CP.gravar=function(){const ls=lerLS();if(ls)D=mesclar(CP.dados(),ls);gravarLS();if(typeof CP.aoGravar==="function")CP.aoGravar();};
 // outra janela gravou: junta (sem perder nada desta)
 CP.absorver=function(){const ls=lerLS();if(ls&&D)D=mesclar(D,ls);else if(ls)D=normalizar(ls);};
-// backups automáticos das compras: 1 cópia por dia, últimos 5 dias (como nas finanças, mas separado)
-function backupDoDia(){try{const l=JSON.parse(localStorage.getItem(CHAVE_AUTO)||"[]"),h=hoje();
-  const s=JSON.stringify(D);const sem=l.filter(x=>x.dia!==h);sem.push({dia:h,dados:s});
-  localStorage.setItem(CHAVE_AUTO,JSON.stringify(sem.slice(-5)));}catch(e){}}
-CP.backups=function(){try{return JSON.parse(localStorage.getItem(CHAVE_AUTO)||"[]");}catch(e){return[];}};
+// cópia automática: UMA por dia, feita ao abrir (como estava antes de qualquer edição de hoje), só as 3 últimas.
+// (Antes era regravada a cada toque, até 5 cópias: enchia a memória e guardava o erro do próprio dia.)
+function copiaAoAbrir(cru){try{const l=JSON.parse(localStorage.getItem(CHAVE_AUTO)||"[]"),h=hoje();
+  if(!Array.isArray(l)||l.some(x=>x&&x.dia===h))return;l.push({dia:h,dados:cru});
+  localStorage.setItem(CHAVE_AUTO,JSON.stringify(l.slice(-3)));}catch(e){}}
+CP.backups=function(){try{const l=JSON.parse(localStorage.getItem(CHAVE_AUTO)||"[]");return Array.isArray(l)?l.filter(x=>x&&typeof x.dia==="string"&&typeof x.dados==="string"):[];}catch(e){return[];}};
 
 // carimba um registro editado: _em sempre cresce (mesmo com relógio igual) e diz quem editou
 function carimbar(r){r._em=Math.max(Date.now(),(+r._em||0)+1);r._por=CP.eu().id;return r;}
 CP.carimbar=carimbar;
-CP.por=(col,id)=>{const r=CP.dados()[col][id];return r&&!r._del?r:null;};
+CP.por=(col,id)=>{const m=CP.dados()[col];if(!m||typeof id!=="string"||!TEM(m,id))return null;const r=m[id];return r&&!r._del?r:null;};
 CP.vivos=col=>Object.values(CP.dados()[col]).filter(r=>r&&!r._del);
 CP.salvarReg=function(col,r){if(!r.id)r.id=novoId();carimbar(r);CP.dados()[col][r.id]=r;return r;};
 // (a compra apagada guarda a data: o marcador fica no MESMO documento do ano dela na nuvem)
-CP.apagar=function(col,id){const d=CP.dados(),r=d[col][id];if(!r)return;const m={id,_del:true,_em:r._em};if(r.data)m.data=r.data;d[col][id]=carimbar(m);};
+CP.apagar=function(col,id){const d=CP.dados();if(typeof id!=="string"||!TEM(d[col],id))return;const r=d[col][id];if(!r)return;const m={id,_del:true,_em:r._em};if(r.data)m.data=r.data;d[col][id]=carimbar(m);};
 // marcadores de exclusão com mais de 180 dias saem (todos os aparelhos já viram)
 CP.limparMarcadores=function(){const d=CP.dados(),lim=Date.now()-180*86400000;
   COLECOES.forEach(c=>{for(const[k,r]of Object.entries(d[c]))if(r._del&&(+r._em||0)<lim)delete d[c][k];});};
@@ -4618,7 +4670,7 @@ CP.vaRecebido=function(ym){try{const m=(state.meses||[]).find(x=>x.ym===ym);retu
 CP.mercadoNasFinancas=function(ym){try{if(typeof gastoPorCategoria!=="function")return null;const g=gastoPorCategoria([ym]);return r2(g.Mercado||0);}catch(e){return null;}};
 
 // resumo do mês: total, por pagamento, por mercado, por seção; VA recebido × gasto × saldo
-CP.resumoMes=function(ym){const cs=CP.comprasDoMes(ym);const o={ym,n:cs.length,total:0,va:0,outros:0,porMercado:{},porSecao:{},porProduto:{},extras:0};
+CP.resumoMes=function(ym){const cs=CP.comprasDoMes(ym);const o={ym,n:cs.length,total:0,va:0,outros:0,porMercado:mapa(),porSecao:mapa(),porProduto:mapa(),extras:0};
   cs.forEach(c=>{const t=CP.totalCompra(c),v=Math.min(CP.vaDaCompra(c),t);o.total+=t;o.va+=v;o.outros+=t-v;
     const mn=CP.nomeMercado(c.mercadoId);o.porMercado[mn]=(o.porMercado[mn]||0)+t;
     const soma=(c.itens||[]).reduce((s,x)=>s+(+x.vTotal||0),0),f=soma>0?t/soma:1; // descontos da nota rateados
@@ -4644,7 +4696,7 @@ CP.historicoPrecos=function(pid){const out=[];
 CP.ultimoPreco=function(pid,mercadoId){const h=CP.historicoPrecos(pid).filter(x=>!mercadoId||x.mercadoId===mercadoId);return h[0]||null;};
 // resumo por produto: último preço em cada mercado, menor e média
 CP.resumoPrecos=function(){return CP.vivos("produtos").map(p=>{const h=CP.historicoPrecos(p.id);if(!h.length)return null;
-  const porM={};h.forEach(x=>{if(!porM[x.mercadoId])porM[x.mercadoId]=x;});
+  const porM=mapa();h.forEach(x=>{if(!porM[x.mercadoId])porM[x.mercadoId]=x;});
   const vs=h.map(x=>x.vUnit);const ult=Object.values(porM).sort((a,b)=>a.vUnit-b.vUnit);
   return{p,h,ultimoPorMercado:ult,menor:Math.min(...vs),media:r2(vs.reduce((s,v)=>s+v,0)/vs.length),ultimo:h[0]};}).filter(Boolean)
   .sort((a,b)=>String(a.p.nome).localeCompare(String(b.p.nome),"pt-BR"));};
@@ -4657,7 +4709,7 @@ CP.previaLista=function(lid){let total=0,com=0,sem=0;
   return{total:r2(total),com,sem};};
 // reposição: produtos comprados em intervalos regulares, já perto da hora de comprar de novo
 CP.sugestoesReposicao=function(lid){const naLista=new Set(lid?CP.itensDa(lid).map(i=>i.produtoId):[]);const h=hoje();const out=[];
-  const datas={};CP.comprasVivas().forEach(c=>(c.itens||[]).forEach(x=>{if(!x.produtoId)return;(datas[x.produtoId]=datas[x.produtoId]||new Set()).add(c.data);}));
+  const datas=mapa();CP.comprasVivas().forEach(c=>(c.itens||[]).forEach(x=>{if(!x.produtoId)return;(datas[x.produtoId]=datas[x.produtoId]||new Set()).add(c.data);}));
   for(const[pid,ds]of Object.entries(datas)){if(naLista.has(pid))continue;const p=CP.por("produtos",pid);if(!p)continue;
     const l=[...ds].sort();if(l.length<2)continue;
     const ints=[];for(let i=1;i<l.length;i++){const d=dias(l[i-1],l[i]);if(d>0)ints.push(d);}if(!ints.length)continue;
@@ -4668,7 +4720,9 @@ CP.sugestoesReposicao=function(lid){const naLista=new Set(lid?CP.itensDa(lid).ma
 // ---------- exportar / importar (backup das compras) ----------
 CP.exportar=()=>JSON.stringify({tipo:"compras-familia",v:1,em:new Date().toISOString(),dados:CP.dados()},null,1);
 CP.importar=function(txt,substituir){const j=JSON.parse(txt);if(!j||j.tipo!=="compras-familia")throw new Error("Este arquivo não é um backup das compras.");
-  const n=normalizar(j.dados);D=substituir?n:mesclar(CP.dados(),n);
+  CP.absorver();
+  const n=normalizar(j.dados);n.config=normalizar(CP.dados()).config; // um backup nunca troca os ajustes (nem o endereço do intermediário)
+  D=substituir?n:mesclar(CP.dados(),n);
   if(substituir){// substituir também precisa vencer a nuvem: recarimba tudo
     COLECOES.forEach(c=>Object.values(D[c]).forEach(r=>carimbar(r)));}
   gravarLS();};
@@ -4682,7 +4736,7 @@ CP.partir=function(d){const out={};out[CP.DOC_PRINCIPAL]=vazio();
 CP.anosConhecidos=function(){const c=CP.config(),s=new Set((c.anos||[]).map(String));
   Object.values(CP.dados().compras).forEach(r=>{const n=CP.docDe("compras",r).slice(8);if(/^\d{4}$/.test(n))s.add(n);});
   s.add(String(new Date().getFullYear()));return[...s].sort();};
-})(CP);
+})(CP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("45: "+e.message);}
 
 // ============ COMPRAS — sincronização (separada da das finanças) ============
 // Usa a MESMA conta, a mesma senha da família e a mesma criptografia das finanças (só chama as funções
@@ -4692,13 +4746,26 @@ CP.anosConhecidos=function(){const c=CP.config(),s=new Set((c.anos||[]).map(Stri
 // As regras atuais do Firestore já cobrem estes documentos (mesma exigência de versão e tamanho).
 // "Ao vivo" (lista aberta no mercado): a cada poucos segundos lê só o carimbo do documento (leitura leve);
 // baixa o conteúdo apenas quando outro aparelho mudou algo.
-(function(CP){
+try{(function(CP){
 "use strict";
 const CHAVE_EST=KEY+"__compras_sync";
 let est=lerEst();
-function lerEst(){try{return JSON.parse(localStorage.getItem(CHAVE_EST)||"{}")||{};}catch(e){return{};}}
+// o que foi gravado aqui pode estar corrompido (outra ferramenta, versão antiga): só aceita objeto, senão recomeça do zero
+function lerEst(){try{const j=JSON.parse(localStorage.getItem(CHAVE_EST)||"{}");return j&&typeof j==="object"&&!Array.isArray(j)?j:{};}catch(e){return{};}}
 function gravarEst(){try{localStorage.setItem(CHAVE_EST,JSON.stringify(est));}catch(e){}}
-if(!est.docs)est.docs={};
+// "impressão digital" curta do conteúdo de um documento (antes guardávamos o conteúdo INTEIRO aqui — enchia a memória do aparelho,
+// que é a mesma das finanças). Dois FNV-1a de 32 bits com sementes diferentes + tamanho.
+function hashCurto(t){t=String(t);let a=2166136261,b=84696351;for(let i=0;i<t.length;i++){const c=t.charCodeAt(i);a=Math.imul(a^c,16777619)>>>0;b=Math.imul(b^c,2246822519)>>>0;}
+  return t.length+"."+a.toString(36)+b.toString(36);}
+if(!est.docs||typeof est.docs!=="object"||Array.isArray(est.docs))est.docs={};
+for(const k of Object.keys(est.docs)){const d=est.docs[k];if(!d||typeof d!=="object"){delete est.docs[k];continue;}if(typeof d.hash==="string"&&d.hash.length>40)d.hash=hashCurto(d.hash);}
+const sess=Object.create(null); // documentos já baixados nesta abertura do app: o 1º ciclo de cada um SEMPRE baixa e junta
+// pedido com tempo limite: com sinal ruim a requisição ficava pendurada e travava a sincronização para sempre
+async function fetchT(url,opt,ms){const ac=typeof AbortController!=="undefined"?new AbortController():null;const t=ac?setTimeout(()=>ac.abort(),ms||15000):null;
+  try{return await fetch(url,Object.assign({},opt,ac?{signal:ac.signal}:{}));}
+  catch(e){if(ac&&ac.signal.aborted){const x=new Error("Sem resposta da nuvem (tempo esgotado — sinal fraco?)");x.tempo=true;throw x;}throw e;}
+  finally{if(t)clearTimeout(t);}}
+CP.fetchT=fetchT;
 CP.sync={status:"",msg:"",ultimo:est.ultimo||0,emCurso:null};
 const urlDoc=n=>"https://firestore.googleapis.com/v1/projects/"+FB.projectId+"/databases/(default)/documents/casas/"+n;
 const LOG=KEY+"__compras_log";
@@ -4707,7 +4774,7 @@ CP.log=function(){try{return JSON.parse(localStorage.getItem(LOG)||"[]");}catch(
 CP.syncAtivo=function(){try{return syncAtivo();}catch(e){return false;}};
 
 async function ler(nome,soCarimbo){
-  const r=await fetch(urlDoc(nome)+(soCarimbo?"?mask.fieldPaths=em":""),{cache:"no-store",headers:{Authorization:"Bearer "+await fbToken()}});
+  const r=await fetchT(urlDoc(nome)+(soCarimbo?"?mask.fieldPaths=em":""),{cache:"no-store",headers:{Authorization:"Bearer "+await fbToken()}});
   if(r.status===404)return null;
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(r.status===403?"Sem permissão na nuvem para as compras (regras do Firebase ou versão antiga do app — feche e abra o app).":"Erro "+r.status+" da nuvem: "+((j.error&&j.error.message)||""));
@@ -4717,7 +4784,7 @@ async function gravar(nome,d,updateTime){
   const pre=updateTime?"currentDocument.updateTime="+encodeURIComponent(updateTime):"currentDocument.exists=false";
   const corpo={fields:{cifra:{stringValue:d.cifra},iv:{stringValue:d.iv},salt:{stringValue:sync.salt||""},gz:{booleanValue:d.gz},
     versao:{integerValue:"1"},v:{integerValue:String(APP_VERSAO)},por:{stringValue:sync.email||""},em:{timestampValue:new Date().toISOString()}}};
-  const r=await fetch(urlDoc(nome)+"?"+pre,{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
+  const r=await fetchT(urlDoc(nome)+"?"+pre,{method:"PATCH",headers:{Authorization:"Bearer "+await fbToken(),"Content-Type":"application/json"},body:JSON.stringify(corpo)});
   const j=await r.json().catch(()=>({}));const st=(j.error&&j.error.status)||"";
   if(r.status===409||r.status===412||st==="FAILED_PRECONDITION"||st==="ABORTED"||st==="ALREADY_EXISTS")return{conflito:true};
   if(!r.ok)throw new Error(r.status===403?"A nuvem recusou gravar as compras (versão antiga do app? feche e abra o app).":"Erro "+r.status+" ao gravar: "+((j.error&&j.error.message)||""));
@@ -4729,67 +4796,92 @@ async function syncDoc(nome){
     CP.absorver();
     const k=est.docs[nome]||null;
     const c=await ler(nome,true);
-    if(c&&(!k||k.ut!==c.updateTime)){
+    // baixa e junta quando o documento mudou OU é a 1ª vez nesta abertura do app (o que o aparelho tem pode estar mais velho do que
+    // o que ele "lembra" ter enviado — ex.: gravação local que falhou antes de fechar o app — e aí ele sobrescreveria a nuvem)
+    if(c&&(!k||k.ut!==c.updateTime||!sess[nome])){
       const rem=await ler(nome,false);
-      if(rem&&rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app para atualizar.");
+      if(!rem)continue;
+      if(rem.v>APP_VERSAO)throw new Error("Existe uma versão mais nova do app. Feche e abra o app para atualizar.");
       const dados=CP.normalizar(await decifrar(rem));
       const antes=CP.estavel(CP.partir(CP.dados())[nome]||CP.vazio());
-      CP.substituir(CP.mesclar(CP.dados(),dados));
-      est.docs[nome]={ut:rem.updateTime,hash:CP.estavel(dados)};gravarEst();
+      CP.substituir(CP.mesclar(CP.dados(),dados));sess[nome]=1;
+      est.docs[nome]={ut:rem.updateTime,hash:hashCurto(CP.estavel(dados))};gravarEst();
       if(CP.estavel(CP.partir(CP.dados())[nome]||CP.vazio())!==antes){CP.registrar("recebeu "+nome+" da nuvem");CP.recebeu=true;}
     }else if(!c&&k){delete est.docs[nome];gravarEst();}
-    const parte=CP.partir(CP.dados())[nome]||CP.vazio();const h=CP.estavel(parte);
+    const parte=CP.partir(CP.dados())[nome]||CP.vazio();const h=hashCurto(CP.estavel(parte));
     const atual=est.docs[nome];
     if(atual&&atual.hash===h)return;          // nada de novo daqui
-    if(!atual&&!c&&h===CP.estavel(CP.vazio()))return; // nada aqui nem lá
+    if(!atual&&!c&&h===hashCurto(CP.estavel(CP.vazio())))return; // nada aqui nem lá
     const d=await cifrar(parte);
     if(d.cifra.length>900000)throw new Error("As compras de "+nome+" passaram do tamanho de um documento da nuvem. Avise para dividirmos.");
     const w=await gravar(nome,d,atual&&c?atual.ut:null);
     if(w.conflito)continue;                    // outro aparelho gravou no meio: lê de novo e junta
-    est.docs[nome]={ut:w.updateTime,hash:h};gravarEst();CP.registrar("enviou "+nome);return;
+    est.docs[nome]={ut:w.updateTime,hash:h};sess[nome]=1;gravarEst();CP.registrar("enviou "+nome);return;
   }
   throw new Error("Não consegui gravar as compras na nuvem (muitos aparelhos gravando ao mesmo tempo?). Tente de novo.");
 }
 
 // ciclo: sempre o documento principal; os anos só quando pedido (abrir o módulo, salvar compra) — no modo
-// "ao vivo" só o principal, que é onde estão as listas
+// "ao vivo" só o principal, que é onde estão as listas. Um documento com erro NÃO impede os outros (ano atual primeiro).
+const ehRede=e=>!!(e&&(e.tempo||/Failed to fetch|NetworkError|Load failed|tempo esgotado/i.test(e.message||"")));
 CP.sincronizar=function(opc){opc=opc||{};
   if(!CP.syncAtivo())return Promise.resolve();
-  if(CP.sync.emCurso)return CP.sync.emCurso;
-  CP.sync.emCurso=(async()=>{
+  const atual=CP.sync.emCurso;
+  if(atual){ // já há um ciclo; se ele só enviava o principal e este pede os anos, encadeia outro depois
+    if(opc.soPrincipal||!CP.sync.soPrincipal)return atual;
+    return atual.then(()=>CP.sincronizar(opc));}
+  CP.sync.soPrincipal=!!opc.soPrincipal;
+  const p=(async()=>{
     try{
       if(typeof navigator!=="undefined"&&navigator.onLine===false){CP.statusSync("offline");return;}
       CP.recebeu=false;CP.statusSync("sincronizando");
-      await syncDoc(CP.DOC_PRINCIPAL);
+      const erros=[];
+      const doc=async n=>{try{await syncDoc(n);return true;}catch(e){if(ehRede(e))throw e;erros.push((n===CP.DOC_PRINCIPAL?"listas":n.replace("compras-","compras de "))+": "+e.message);return false;}};
+      const okP=await doc(CP.DOC_PRINCIPAL);
       if(!opc.soPrincipal){
-        const anos=CP.anosConhecidos();
-        const c=CP.config();if(CP.estavel(c.anos||[])!==CP.estavel(anos)){CP.salvarConfig({anos});await syncDoc(CP.DOC_PRINCIPAL);}
-        for(const a of anos)await syncDoc("compras-"+a);
+        const anos=CP.anosConhecidos().slice().sort().reverse(); // o ano atual primeiro
+        const c=CP.config();if(okP&&CP.estavel(c.anos||[])!==CP.estavel(anos.slice().reverse())){CP.salvarConfig({anos:anos.slice().reverse()});await doc(CP.DOC_PRINCIPAL);}
+        for(const a of anos)await doc("compras-"+a);
       }
+      if(erros.length)throw new Error(erros.join(" · "));
       CP.limparMarcadores();
       est.ultimo=CP.sync.ultimo=Date.now();gravarEst();CP.statusSync("ok");
       if(CP.recebeu&&typeof CP.aoReceber==="function")CP.aoReceber();
-    }catch(e){CP.registrar("erro: "+e.message);CP.statusSync(/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"offline":"erro",e.message);}
-    finally{CP.sync.emCurso=null;}
+    }catch(e){CP.registrar("erro: "+e.message);CP.statusSync(ehRede(e)?"offline":"erro",e.message);}
   })();
-  return CP.sync.emCurso;};
+  CP.sync.emCurso=p;
+  // libera depois (fora da função async): com "sem internet" ela termina antes de a variável existir, e o antigo "finally" interno
+  // deixava o ciclo preso para sempre
+  const fim=()=>{if(CP.sync.emCurso===p)CP.sync.emCurso=null;};p.then(fim,fim);
+  return p;};
 CP.statusSync=function(tipo,msg){CP.sync.status=tipo;CP.sync.msg=msg||"";if(typeof CP.aoStatus==="function")CP.aoStatus();};
 CP.textoSync=function(){const s=CP.sync;if(!CP.syncAtivo())return"📴 só neste aparelho";
   const h=s.ultimo?new Date(s.ultimo).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):"";
-  return s.status==="sincronizando"?"⏳ sincronizando…":s.status==="offline"?"📴 sem internet — salvo no aparelho":s.status==="erro"?"⚠ não sincronizou":"☁️ atualizado"+(h?" às "+h:"");};
+  return s.status==="sincronizando"?"⏳ sincronizando…":s.status==="offline"?"📴 sem sinal — salvo no aparelho":s.status==="erro"?"⚠ não sincronizou":"☁️ atualizado"+(h?" às "+h:"");};
 // depois de cada edição: envia logo (só o principal, rápido); as compras do ano vão no ciclo completo
 let tEnvio=null;
-CP.aoGravar=function(){if(!CP.syncAtivo())return;clearTimeout(tEnvio);tEnvio=setTimeout(()=>CP.sincronizar({soPrincipal:!CP.precisaAnos}).then(()=>{CP.precisaAnos=false;}),700);};
+// "precisaAnos" só é zerado depois de um envio que deu certo (antes zerava mesmo com falha e a compra ficava só no aparelho)
+CP.aoGravar=function(){if(!CP.syncAtivo())return;clearTimeout(tEnvio);tEnvio=setTimeout(()=>{const pedeAnos=!!CP.precisaAnos;CP.sincronizar({soPrincipal:!pedeAnos}).then(()=>{if(pedeAnos&&CP.sync.status==="ok")CP.precisaAnos=false;});},700);};
 
-// ---- "ao vivo": enquanto o módulo está aberto e a tela visível ----
-let tVivo=null;
-CP.vivo=function(seg){clearInterval(tVivo);tVivo=null;if(!seg)return;
-  tVivo=setInterval(()=>{if(typeof document!=="undefined"&&document.visibilityState==="hidden")return;CP.sincronizar({soPrincipal:true});},seg*1000);};
+// ---- "ao vivo": só com a Lista aberta, a tela visível e a pessoa usando (para após 3 min sem tocar: poupa leituras do Firebase e bateria) ----
+let tVivo=null,ultimoToque=Date.now();
+const SEM_USO=180000;
+const aberto=()=>typeof HUB==="undefined"||!HUB.atual||HUB.atual()==="lista";
+CP.vivo=function(seg){clearInterval(tVivo);tVivo=null;if(!seg||!aberto())return;
+  tVivo=setInterval(()=>{if(!aberto()){clearInterval(tVivo);tVivo=null;return;}
+    if(typeof document!=="undefined"&&document.visibilityState==="hidden")return;
+    if(Date.now()-ultimoToque>SEM_USO)return;
+    CP.sincronizar({soPrincipal:true});},seg*1000);};
 if(typeof window!=="undefined"&&window.addEventListener){
+  const tocou=()=>{const dormiu=Date.now()-ultimoToque>SEM_USO;ultimoToque=Date.now();if(dormiu&&tVivo)CP.sincronizar({soPrincipal:true});};
+  ["pointerdown","keydown","touchstart"].forEach(ev=>window.addEventListener(ev,tocou,{passive:true,capture:true}));
+  // voltou o sinal / voltou para o app: sincroniza na hora (se a Lista está aberta)
+  window.addEventListener("online",()=>{if(aberto())CP.sincronizar();});
+  if(typeof document!=="undefined")document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&typeof HUB!=="undefined"&&HUB.atual&&HUB.atual()==="lista")CP.sincronizar({soPrincipal:true});});
   // outra janela do mesmo navegador gravou as compras: junta e redesenha
   window.addEventListener("storage",e=>{if(e.key===KEY+"__compras"){CP.absorver();if(typeof CP.aoReceber==="function")CP.aoReceber();}});
 }
-})(CP);
+})(CP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("46: "+e.message);}
 
 // ============ COMPRAS — nota fiscal (NFC-e): QR, leitura dos itens, casamento com a lista ============
 // 1) QR code do cupom → link da Sefaz com a CHAVE de 44 dígitos. Só da chave (sem internet) já saem:
@@ -4800,7 +4892,7 @@ if(typeof window!=="undefined"&&window.addEventListener){
 //    Tudo é lido como TEXTO (nunca como HTML executável).
 // 3) Casamento nota × lista: pelo que o app aprendeu (apelido/código do item naquele mercado) e por
 //    semelhança de nomes ("ARROZ T JOAO 5KG" ↔ "arroz"). Você confirma na tela de conferência.
-(function(CP){
+try{(function(CP){
 "use strict";
 // ---------- chave da NFC-e ----------
 function dvOk(k){let s=0,p=2;for(let i=42;i>=0;i--){s+=(+k[i])*p;p=p===9?2:p+1;}const r=s%11,dv=r<2?0:11-r;return dv===+k[43];}
@@ -4853,7 +4945,8 @@ const norm2=s=>CP.norm(s);
 CP.urlIntermediarioOk=u=>/^(https:\/\/[a-z0-9.-]+|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?)(\/[\w./-]*)?$/i.test(String(u||""));
 CP.temIntermediario=()=>CP.urlIntermediarioOk(CP.config().worker);
 CP.viaIntermediario=async function(alvo){const w=CP.config().worker.replace(/\/+$/,"");
-  const r=await fetch(w+"/?u="+encodeURIComponent(alvo),{cache:"no-store",credentials:"omit"});
+  const pedido=w+"/?u="+encodeURIComponent(alvo),opt={cache:"no-store",credentials:"omit",referrerPolicy:"no-referrer"};
+  const r=await(CP.fetchT?CP.fetchT(pedido,opt,15000):fetch(pedido,opt));
   if(!r.ok)throw new Error("O intermediário respondeu "+r.status+(r.status===403?" (endereço não permitido ou origem do app não liberada)":""));
   const buf=await r.arrayBuffer();const ct=r.headers.get("Content-Type")||"";const cs=(ct.match(/charset=([\w-]+)/i)||[])[1]||"utf-8";
   let t;try{t=new TextDecoder(cs).decode(buf);}catch(e){t=new TextDecoder("utf-8").decode(buf);}return{texto:t,tipo:ct};};
@@ -4950,19 +5043,21 @@ CP.lerCamera=async function(video,aoLer){CP.pararCamera();
 // foto do QR (alternativa quando a câmera ao vivo não abre)
 CP.lerFoto=async function(arquivo){const det=await CP.detector();const img=await createImageBitmap(arquivo);
   const r=await det.detect(img);if(!r||!r.length)throw new Error("Não achei QR code nesta foto. Tente mais perto e com luz.");return r[0].rawValue;};
-})(CP);
+})(CP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("47: "+e.message);}
 
 // ============ COMPRAS — telas (Lista, Conferir nota, Histórico, Meses, Preços, Mercados, Ajustes) ============
 // Desenha em #cpApp (fora da área das finanças). Os gráficos daqui são próprios (não usam chart()/killCharts()
 // das finanças, que apagaria os gráficos de lá e vice-versa).
-(function(CP){
+try{(function(CP){
 "use strict";
 // dinheiro sempre como NÚMERO antes de ir para a tela (defesa extra: nada vindo da nuvem vira HTML)
 const F=v=>fmt(+v||0);
 const ui={aba:"lista",lista:null,editando:null,mostrarPegos:true,mes:null,cmpA:null,cmpB:null,filtroPreco:"",abertoPreco:null,colar:false};
 CP.ui=ui;
 const CHAVE_RASC=KEY+"__compras_rasc";
-let rasc=(()=>{try{return JSON.parse(localStorage.getItem(CHAVE_RASC)||"null");}catch(e){return null;}})();
+// a conferência em andamento guardada no aparelho só vale se tiver o formato certo (qualquer outra coisa é descartada)
+let rasc=(()=>{try{const r=JSON.parse(localStorage.getItem(CHAVE_RASC)||"null");
+  return r&&typeof r==="object"&&!Array.isArray(r)&&(r.etapa==="fonte"||Array.isArray(r.linhas))&&(!r.linhas||r.linhas.every(l=>l&&typeof l==="object"))?r:null;}catch(e){return null;}})();
 function gravarRasc(){try{if(rasc)localStorage.setItem(CHAVE_RASC,JSON.stringify(rasc));else localStorage.removeItem(CHAVE_RASC);}catch(e){}}
 const $=id=>document.getElementById(id);
 const val=id=>{const e=$(id);return e?e.value:"";};
@@ -4979,25 +5074,35 @@ function toast(h){try{avisoRapido(h);}catch(e){}}
 // redesenho vindo da sincronização ao vivo: espera terminar de digitar (o que a pessoa toca redesenha na hora)
 CP.renderFundo=function(){const el=$("cpApp"),a=document.activeElement;
   if(el&&a&&el.contains&&el.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName||"")){CP.renderPendente=true;return;}CP.render();};
-CP.render=function(){const el=$("cpApp");if(!el)return;
+// só desenha com a Lista aberta (antes, um redesenho atrasado reaparecia por cima da tela inicial e religava o "ao vivo")
+const listaAberta=()=>typeof HUB==="undefined"||!HUB.atual||HUB.atual()==="lista";
+// avisos no topo de todas as abas: memória do aparelho cheia (as compras não estão sendo salvas) e nome do aparelho
+function avisosTopo(){let h="";
+  if(CP.erroGravar)h+=`<div class="card" role="alert" style="border-color:var(--rose)"><b>⚠ Não está salvando neste aparelho</b><p class="note" style="margin-top:4px">${esc(CP.erroGravar)}</p></div>`;
+  if(ui.aba==="lista"&&!CP.nomeDefinido())h+=`<div class="card cp-aviso"><b>👋 Como você quer aparecer?</b><p class="note" style="margin-top:4px">Este nome aparece para a outra pessoa quando você marca um item como pego. Escolha um nome por aparelho.</p><div class="row"><input id="cpNomeInicial" aria-label="Seu nome" autocomplete="given-name" maxlength="30" placeholder="seu nome" style="flex:1;min-width:140px"><button class="btn primary" onclick="CP.salvarNomeInicial()">Salvar</button></div></div>`;
+  return h;}
+CP.salvarNomeInicial=function(){const n=val("cpNomeInicial").trim();if(!n){alert("Digite um nome.");return;}CP.definirEu(n);CP.render();};
+CP.render=function(){const el=$("cpApp");if(!el||!listaAberta())return;
   CP.renderPendente=false;limparGraficos();
   const abas=[["lista","🛒 Lista"],["historico","🧾 Histórico"],["meses","📊 Meses"],["precos","🏷️ Preços"],["mercados","📍 Mercados"],["ajustes","⚙️ Ajustes"]];
   let corpo="";
   try{corpo=rasc&&ui.aba==="conferir"?telaConferir():({lista:telaLista,historico:telaHistorico,meses:telaMeses,precos:telaPrecos,mercados:telaMercados,ajustes:telaAjustes}[ui.aba]||telaLista)();}
   catch(e){corpo=`<div class="card"><b style="color:#be123c">Erro ao desenhar esta tela:</b> ${esc(e.message)}</div>`;}
-  el.innerHTML=`<div class="cp-topo"><button class="icone-btn" title="Voltar ao início" onclick="HUB.mostrar()">⌂</button>
-      <h1>Lista de compras</h1><span class="note cp-sync" id="cpSync" onclick="CP.sincronizar().then(CP.render)">${esc(CP.textoSync())}</span>
-      <button class="icone-btn" title="Ocultar/mostrar valores" onclick="CP.olho()">${olhoAberto()?SVG_OLHO_ABERTO:SVG_OLHO_FECHADO}</button></div>
+  let avisos="";try{avisos=avisosTopo();}catch(e){}
+  el.innerHTML=`<div class="cp-topo"><button class="icone-btn" title="Voltar ao início" aria-label="Voltar ao início" onclick="HUB.mostrar()">⌂</button>
+      <h1>Lista de compras</h1><button class="note cp-sync" id="cpSync" aria-label="Sincronizar agora" onclick="CP.sincronizar().then(CP.render)" style="border:0;background:transparent">${esc(CP.textoSync())}</button>
+      <button class="icone-btn" title="Ocultar/mostrar valores" aria-label="Ocultar ou mostrar valores" onclick="CP.olho()">${olhoAberto()?SVG_OLHO_ABERTO:SVG_OLHO_FECHADO}</button></div>
+    ${avisos}
     ${rasc&&ui.aba!=="conferir"?`<div class="card cp-aviso" onclick="CP.irAba('conferir')">🧾 Há uma conferência de nota em andamento — <b>toque para continuar</b></div>`:""}
     <div class="subabas">${abas.map(([id,n])=>`<button class="${ui.aba===id?"on":""}" onclick="CP.irAba('${id}')">${n}</button>`).join("")}</div>
     <div id="cpCorpo">${corpo}</div>`;
-  posDesenho();
+  try{posDesenho();}catch(e){}
   CP.vivo(ui.aba==="lista"&&ui.lista?4:ui.aba==="conferir"?0:30);};
 CP.olho=function(){try{toggleOlho();}catch(e){}CP.render();};
 CP.irAba=function(a){ui.aba=a;if(a!=="conferir"&&a!=="lista")ui.editando=null;CP.render();if(window.scrollTo)window.scrollTo(0,0);};
 CP.aoStatus=function(){const e=$("cpSync");if(e)e.textContent=CP.textoSync();};
-CP.aoReceber=function(){if(HUB.atual()==="lista")CP.renderFundo();else if(HUB.atual()==="hub")HUB.mostrar(true);};
-if(typeof document!=="undefined"&&document.addEventListener)document.addEventListener("focusout",()=>{if(CP.renderPendente)setTimeout(()=>{const a=document.activeElement;if(!a||!/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName||""))CP.render();},60);});
+CP.aoReceber=function(){if(HUB.atual()==="lista")CP.renderFundo();else if(HUB.atual()==="hub")HUB.mostrar(true,true);};
+if(typeof document!=="undefined"&&document.addEventListener)document.addEventListener("focusout",()=>{if(CP.renderPendente&&listaAberta())setTimeout(()=>{const a=document.activeElement;if(listaAberta()&&(!a||!/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName||"")))CP.render();},60);else if(CP.renderPendente)CP.renderPendente=false;});
 
 // ---------- VA do mês (lido das finanças) ----------
 function cardVA(ym,extraGasto){const r=CP.resumoMes(ym);
@@ -5251,8 +5356,17 @@ CP.mercadoAqui=async function(id){const m=CP.por("mercados",id);if(!m)return;
     m.lat=Math.round(p.lat*1e5)/1e5;m.lon=Math.round(p.lon*1e5)/1e5;CP.salvarReg("mercados",m);CP.gravar();CP.render();}catch(e){alert(e.message);}};
 
 // ---------- AJUSTES ----------
+// quem usa a conta e em que versão (lido das finanças: state._aparelhos, só leitura) — para saber como está o app da outra pessoa
+function blocoAparelhos(){let aps=[];try{aps=Object.entries(state._aparelhos||{}).filter(([,a])=>a&&typeof a==="object").sort((a,b)=>(+b[1].visto||0)-(+a[1].visto||0));}catch(e){}
+  if(!aps.length)return"";let meu="";try{meu=CP.eu().id;}catch(e){}
+  return `<div class="card"><h3>📱 Aparelhos da família</h3><p class="note" style="margin-top:0">Quem já abriu o app com a conta conectada e em qual versão está. Versão em vermelho: está desatualizada — feche e abra o app nesse aparelho.</p>
+    <div style="overflow-x:auto"><table><tr><th>Aparelho</th><th>Versão</th><th>Última vez</th></tr>${aps.map(([id,a])=>{let velho=false;try{velho=cmpVersao(a.versao||"",APP_VERSAO_TXT)<0;}catch(e){}
+      return `<tr><td>${esc(a.nome||"?")}${id===meu?' <span class="pill teal">este</span>':""}</td><td${velho?' style="color:#be123c;font-weight:700"':""}>${esc(a.versao||"?")}</td><td>${a.visto?esc(new Date(+a.visto).toLocaleString("pt-BR")):"—"}</td></tr>`;}).join("")}</table></div></div>`;}
+function blocoMemoria(){const t=CP.tamanho(),pct=Math.min(100,Math.round(t.total/t.limite*100));
+  return `<div class="card"><h3>💾 Memória deste aparelho</h3><p class="note" style="margin-top:0">O navegador guarda tudo (finanças e compras) no mesmo espaço, de cerca de 5 milhões de caracteres. Usado: <b>${pct}%</b> (as compras ocupam ${Math.round(t.compras/1000)} mil).${pct>=70?' <b style="color:#be123c">Está ficando cheio: exporte um backup abaixo.</b>':""}</p>
+    <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Memória usada"><div style="width:${pct}%;${pct>=70?"background:var(--rose)":""}"></div></div></div>`;}
 function telaAjustes(){const c=CP.config(),eu=CP.eu(),log=CP.log().slice().reverse().slice(0,15),bk=CP.backups().slice().reverse();
-  return `<div class="card"><h3>Você neste aparelho</h3><div class="row"><input id="cpEu" value="${esc(eu.nome)}" placeholder="seu nome (aparece em “pegou”)"><button class="btn primary" onclick="CP.definirEu(document.getElementById('cpEu').value);CP.render()">Salvar</button></div>
+  return blocoAparelhos()+blocoMemoria()+`<div class="card"><h3>Você neste aparelho</h3><div class="row"><input id="cpEu" value="${esc(eu.nome)}" placeholder="seu nome (aparece em “pegou”)"><button class="btn primary" onclick="CP.definirEu(document.getElementById('cpEu').value);CP.render()">Salvar</button></div>
     <p class="note">Fica só neste aparelho; os outros veem esse nome quando você marca um item.</p></div>
   <div class="card"><h3>Padrões</h3><div class="row">
     <label class="note" style="margin:0">Pagamento mais comum <select onchange="CP.salvarConfig({pagPadrao:this.value})">${Object.entries(PAG).map(([k,n])=>`<option value="${k}" ${k===c.pagPadrao?"selected":""}>${n}</option>`).join("")}</select></label>
@@ -5289,7 +5403,7 @@ function posDesenho(){
       {type:"line",label:"VA recebido",data:rs.map(r=>r.vaRecebido),borderColor:"#f59e0b",backgroundColor:"#f59e0b",tension:.2,spanGaps:true}]},
       options:{maintainAspectRatio:false,scales:{x:{stacked:true},y:{stacked:true}},plugins:{legend:{position:"bottom"},tooltip:{callbacks:{label:c=>c.dataset.label+": "+F(c.raw)}}}}});}
 }
-})(CP);
+})(CP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("48: "+e.message);}
 
 // ============ BUSCA DE PRODUTO — preços perto de você, por valor e distância ============
 // Fontes (cada preço mostra de onde veio e de quando):
@@ -5300,7 +5414,7 @@ function posDesenho(){
 // Privacidade: a posição só é usada com permissão, arredondada (~100 m) e nunca vai para a nuvem da família;
 // os termos buscados vão só para os sites dos mercados (pelo intermediário).
 const BP={};
-(function(BP){
+try{(function(BP){
 "use strict";
 // dinheiro sempre como NÚMERO antes de ir para a tela (defesa extra: nada vindo da nuvem vira HTML)
 const F=v=>fmt(+v||0);
@@ -5308,7 +5422,8 @@ const st={termo:"",qtd:1,pos:null,lugar:"",perto:[],res:null,cesta:null,carregan
 BP.st=st;
 const $=id=>document.getElementById(id);
 const CH_POS=KEY+"__busca_pos",CH_OSM=KEY+"__busca_osm",CH_CACHE=KEY+"__busca_cache";
-try{const p=JSON.parse(localStorage.getItem(CH_POS)||"null");if(p&&Date.now()-p.em<6*3600000)st.pos=p;}catch(e){}
+// posição guardada: só vale se for um objeto com coordenadas de verdade e recente (qualquer outra coisa é descartada)
+try{const p=JSON.parse(localStorage.getItem(CH_POS)||"null");if(p&&typeof p==="object"&&Number.isFinite(p.lat)&&Number.isFinite(p.lon)&&Math.abs(p.lat)<=90&&Math.abs(p.lon)<=180&&Date.now()-(+p.em||0)<6*3600000)st.pos=p;}catch(e){}
 // sites com catálogo público (VTEX). Só estes endereços passam pelo intermediário.
 // (Carrefour também é VTEX, mas o site recusa consultas automáticas — 503 em 2026-11 — então fica só como link)
 const SITES={"Savegnago":"https://www.savegnago.com.br","Atacadão":"https://www.atacadao.com.br"};
@@ -5329,14 +5444,16 @@ BP.localizar=async function(){st.carregando="localização";st.erro="";BP.render
   catch(e){st.erro=e.message;}
   st.carregando="";BP.render();};
 async function lugarAproximado(){try{
-  const r=await fetch("https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat="+st.pos.lat+"&lon="+st.pos.lon,{headers:{"Accept-Language":"pt-BR"}});
+  const u="https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&lat="+st.pos.lat+"&lon="+st.pos.lon,o={headers:{"Accept-Language":"pt-BR"},referrerPolicy:"no-referrer"};
+  const r=await(CP.fetchT?CP.fetchT(u,o,10000):fetch(u,o));
   const j=await r.json();const a=j.address||{};st.lugar=[a.road,a.suburb||a.neighbourhood,a.city||a.town].filter(Boolean).join(", ");}catch(e){st.lugar="";}}
 // supermercados e atacarejos no raio (OpenStreetMap), com cache de 1 dia por região (~1 km)
 BP.mercadosPerto=async function(forcar){if(!st.pos)return[];const raio=CP.config().raioKm||8;
   const chave=st.pos.lat.toFixed(2)+","+st.pos.lon.toFixed(2)+","+raio;
-  try{const c=JSON.parse(localStorage.getItem(CH_OSM)||"null");if(!forcar&&c&&c.chave===chave&&Date.now()-c.em<86400000){st.perto=c.lista;return st.perto;}}catch(e){}
+  try{const c=JSON.parse(localStorage.getItem(CH_OSM)||"null");if(!forcar&&c&&c.chave===chave&&Array.isArray(c.lista)&&Date.now()-(+c.em||0)<86400000){st.perto=c.lista;return st.perto;}}catch(e){}
   const q=`[out:json][timeout:20];(nwr["shop"~"^(supermarket|wholesale)$"](around:${Math.round(raio*1000)},${st.pos.lat},${st.pos.lon}););out center tags 80;`;
-  const r=await fetch("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q));
+  const uo="https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),oo={referrerPolicy:"no-referrer"};
+  const r=await(CP.fetchT?CP.fetchT(uo,oo,20000):fetch(uo,oo));
   if(!r.ok)throw new Error("O OpenStreetMap não respondeu agora ("+r.status+"). Tente de novo em instantes.");
   const j=await r.json();
   st.perto=(j.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??(e.center&&e.center.lat),lon=e.lon??(e.center&&e.center.lon);
@@ -5428,7 +5545,9 @@ BP.buscarLista=async function(){const l=CP.listasAbertas()[0];if(!l){alert("Nenh
   st.carregando="";BP.render();};
 
 // ---------- tela ----------
-BP.render=function(){const el=$("cpApp");if(!el)return;const cfg=CP.config();
+BP.render=function(){const el=$("cpApp");if(!el)return;
+  try{BP.desenhar(el);}catch(e){el.innerHTML='<div class="cp-topo"><button class="icone-btn" aria-label="Voltar ao início" onclick="HUB.mostrar()">⌂</button><h1>Busca de produto</h1></div><div class="card"><b style="color:#be123c">Não consegui desenhar esta tela.</b><p class="note">'+esc(e.message)+'</p><button class="btn" onclick="BP.st.res=null;BP.st.cesta=null;BP.st.erro=\'\';BP.render()">Limpar e tentar de novo</button></div>';}};
+BP.desenhar=function(el){const cfg=CP.config();
   const lojas=st.pos?lojasPorRede():{};
   const mapa=(lat,lon)=>lat!=null?`https://www.openstreetmap.org/?mlat=${+lat}&mlon=${+lon}#map=17/${+lat}/${+lon}`:"";
   const ofertaHtml=o=>`<div class="bp-oferta">${o.img?`<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="bp-sem-img">${o.fonte==="site"?"🛒":"🧾"}</div>`}
@@ -5445,7 +5564,7 @@ BP.render=function(){const el=$("cpApp");if(!el)return;const cfg=CP.config();
         <label class="note" style="margin:0"><input type="checkbox" ${cfg.contarDeslocamento?"checked":""} onchange="CP.salvarConfig({contarDeslocamento:this.checked});BP.reordenar()"> contar o deslocamento (${F(cfg.custoKm)}/km, ida e volta)</label></div></div>
     <div class="card"><div class="flexbet"><span>📍 ${st.pos?`<b>Você está ${st.lugar?"perto de "+esc(st.lugar):"localizado"}</b> <span class="note" style="margin:0">(precisão ~${st.pos.prec} m${st.pos.em?", "+new Date(st.pos.em).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""})</span>`:"Localização não informada"}</span>
       <button class="btn" onclick="BP.localizar()">${st.pos?"↻ atualizar":"Usar minha localização"}</button></div>
-      ${st.pos?`<p class="note">Raio de ${+cfg.raioKm||0} km: ${st.perto.length} mercado(s) no mapa${Object.keys(lojas).length?" · redes: "+Object.entries(lojas).sort((a,b)=>a[1].dist-b[1].dist).map(([r,l])=>esc(r)+" ("+String(l.dist).replace(".",",")+" km)").join(", "):""}.</p>`:`<p class="note">Com a localização, a busca mostra a distância de cada loja e escolhe o melhor custo (preço + deslocamento). A posição fica só neste aparelho.</p>`}</div>
+      ${st.pos?`<p class="note">Raio de ${+cfg.raioKm||0} km: ${st.perto.length} mercado(s) no mapa${Object.keys(lojas).length?" · redes: "+Object.entries(lojas).sort((a,b)=>a[1].dist-b[1].dist).map(([r,l])=>esc(r)+" ("+String(l.dist).replace(".",",")+" km)").join(", "):""}.</p>`:`<p class="note">Com a localização, a busca mostra a distância de cada loja e escolhe o melhor custo (preço + deslocamento). Sua posição (arredondada) é enviada ao OpenStreetMap só para achar mercados e o endereço aproximado; nunca vai para a nuvem da família.</p>`}</div>
     ${st.carregando?`<div class="card"><p class="note">⏳ Buscando ${esc(st.carregando)}…</p></div>`:""}
     ${st.erro?`<div class="card"><p class="note" style="color:#be123c">⚠ ${esc(st.erro)}</p></div>`:""}
     ${st.modo==="produto"&&st.res?`<div class="card"><h3>${st.res.ofertas.length?"Melhores ofertas para “"+esc(st.res.termo)+"”":"Nada encontrado para “"+esc(st.res.termo)+"”"}</h3>
@@ -5468,7 +5587,7 @@ function telaCesta(){const c=st.cesta;const melhor=c.lista[0];
     <p class="note">Preço do site pode variar na loja; confira as ofertas da semana.</p></div>`;}
 BP.reordenar=function(){if(st.modo==="produto"&&st.res){BP.ranquear(st.res.ofertas.map(o=>{delete o.selo;return o;}),st.qtd,st.pos?lojasPorRede():{},CP.config());}
   if(st.modo==="lista"&&st.cesta)return BP.buscarLista();BP.render();};
-})(BP);
+})(BP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("49: "+e.message);}
 
 // ============ GRÁFICOS PÓS-RENDER ============
 function after(){
@@ -5662,7 +5781,9 @@ function after(){
 if(syncAtivo()&&!(typeof navigator!=="undefined"&&navigator.onLine===false)){esperandoNuvem=true;setTimeout(liberarTela,12000);}
 aplicarTema();aplicarOlho();render();statusSync("");sincronizar();
 // tela inicial (Contas Casa · Lista de compras · Busca de produto) — depois das finanças já desenhadas; se falhar, as finanças seguem normais
-try{HUB.iniciar();}catch(e){if(typeof console!=="undefined")console.error(e);}
+try{HUB.iniciar();}catch(e){if(typeof console!=="undefined")console.error(e);
+  // a tela inicial falhou: as finanças aparecem como sempre (nunca ficar numa tela em branco)
+  try{const h=document.getElementById("hub");if(h)h.remove();const b=document.body.classList;b.remove("modo-hub","modo-cp");b.add("modo-casa");}catch(e2){}}
 </script>
 <script>if("serviceWorker" in navigator&&location.protocol.startsWith("http")){
   const tinha=!!navigator.serviceWorker.controller;let recarregou=false;
