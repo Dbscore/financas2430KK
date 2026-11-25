@@ -942,7 +942,17 @@ function lqPrevia(){const el=document.getElementById("lqSaldo");if(!el)return;
 // Campos sem onchange (lidos por botão, via numBR) já ficam formatados na hora. O estado guarda número JS normal.
 function campoMostrar(el,n){const mn=String(el.getAttribute("step")||"")==="0.01"?2:0;
   el.value=isFinite(n)?n.toLocaleString("pt-BR",{minimumFractionDigits:mn,maximumFractionDigits:Math.max(mn,6)}):"";}
+// campo que pode ser NEGATIVO (ex.: saldo da conta no vermelho): o teclado numérico do iPhone não tem o "-", então ganha um botão ± ao lado
+function campoSinal(el){if(!el||!el.hasAttribute||!el.hasAttribute("data-neg")||el.getAttribute("data-sinal"))return;el.setAttribute("data-sinal","1");
+  if(!el.parentNode||!document.createElement)return;
+  const b=document.createElement("button");b.type="button";b.className="btn";b.textContent="±";b.title="Trocar sinal: positivo ↔ negativo";b.setAttribute("aria-label","Trocar o sinal do valor (positivo ou negativo)");
+  b.style.cssText="min-width:44px;min-height:44px;margin-left:6px;font-size:18px";
+  b.onclick=()=>{const t=String(el.value||"").trim(),n=numBR(t);
+    if(!t||t==="-"){el.value=t==="-"?"":"-";if(el.focus)el.focus();return;} // campo vazio: só põe o "-" e deixa a pessoa digitar os números
+    campoMostrar(el,-n);try{el.dispatchEvent(new Event("change",{bubbles:true}));}catch(e){}if(el.focus)el.focus();};
+  el.parentNode.insertBefore(b,el.nextSibling);}
 function campoPreparar(el){ // ao desenhar: valor de máquina ("1550.3") -> "1.550,30"
+  campoSinal(el);
   if(!el||el.getAttribute("data-fmt"))return;el.setAttribute("data-fmt","1");
   const v=el.value;if(v===""||v==null)return;
   if(/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(v))campoMostrar(el,Number(v));}
@@ -1217,7 +1227,7 @@ function vSobras(){
   <div class="card" style="border-color:var(--indigo)"><div class="flexbet"><h3>💰 Quanto sobra na sua conta — ${lbl(sobSel)}</h3>
     ${tudoPago?'<span class="pill teal">todas as contas pagas</span>':`<span class="pill" style="background:#fef3c7;color:#92400e">${nContas-nPagas} conta(s) a pagar</span>`}</div>
     <table style="max-width:560px">
-      <tr><td>Saldo no começo do mês <span class="note" style="margin:0">(o que já estava na conta — opcional, para a conciliação bater)</span></td><td class="n"><input type="text" inputmode="decimal" data-num step="0.01" value="${C.inicial||""}" placeholder="0,00" style="width:110px" onchange="setSaldoInicial('${sobSel}',this.value)"></td></tr>
+      <tr><td>Saldo no começo do mês <span class="note" style="margin:0">(o que já estava na conta — opcional, para a conciliação bater)</span></td><td class="n"><input type="text" inputmode="decimal" data-num data-neg step="0.01" value="${C.inicial||""}" placeholder="0,00" style="width:110px" onchange="setSaldoInicial('${sobSel}',this.value)"></td></tr>
       <tr><td>Renda do mês (salário + extra fixo)</td><td class="n teal">+ ${fmt(C.renda)}</td></tr>
       ${C.extra>0?`<tr><td>Rendas extras avulsas (recebidas)</td><td class="n teal">+ ${fmt(C.extra)}</td></tr>`:""}
       <tr><td>Contas já pagas (aba Status)</td><td class="n">− ${fmt(C.pago)}</td></tr>
@@ -1248,7 +1258,7 @@ function vSobras(){
     ${rows.map(x=>{acc=r2(acc+x.v);return `<tr><td>${x.t}</td><td class="n" style="color:${x.v>=0?'#0f766e':'#be123c'}">${x.v>=0?"+":"−"} ${fmt(Math.abs(x.v))}</td><td class="n">${fmt(acc)}</td></tr>`;}).join("")}
     <tr style="border-top:2px solid var(--border)"><td style="padding-top:6px"><b>= Sobra em conta agora</b></td><td></td><td class="n" style="padding-top:6px"><b>${fmt(C2.saldoAgora)}</b></td></tr></table>
     <div class="row" style="margin-top:10px">
-      <label style="font-size:12px"><b>🏦 Conciliação:</b> saldo real no banco R$ <input type="text" inputmode="decimal" data-num step="0.01" id="concSaldo" placeholder="ex.: 1433,52" style="width:110px"></label>
+      <label style="font-size:12px"><b>🏦 Conciliação:</b> saldo real no banco R$ <input type="text" inputmode="decimal" data-num data-neg step="0.01" id="concSaldo" placeholder="ex.: 1433,52" style="width:110px"></label>
       <button class="btn primary" style="padding:4px 10px" onclick="conciliar('${sobSel}')">comparar</button>
     </div>
     <p class="note" style="margin-top:4px">Se houver diferença, ofereço registrar um <b>ajuste de conciliação</b> (lançamento avulso) para alinhar a ferramenta ao banco — auditável e reversível na lista de gastos.</p>`;})()}
@@ -4029,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.25-4";
+const APP_VERSAO_TXT="2026.11.25-5";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4480,7 +4490,7 @@ body.modo-cp #folhaLanc,body.modo-hub #folhaLanc{display:none!important;}
 body.modo-cp{overflow:visible!important;} /* o estilo.css deixa o body com overflow-x:hidden, o que mata o "sticky" do topo, do Finalizar e dos avisos */
 #cpApp button,#cpApp .cp-check,#hub button,#cpApp select{touch-action:manipulation;}
 #cpApp select{height:44px;} #cpApp .btn.cp-mini{min-height:44px!important;}
-.hub-card .hub-info b{display:inline;font-size:inherit;}
+.hub-card .hub-info b{display:inline;font-size:inherit;white-space:nowrap;} .hub-topo .icone-btn{margin-left:auto;}
 /* contraste do verde (branco sobre #0d9488 dá 3,75:1; no escuro, 1,86:1) — só dentro da tela inicial, da Lista e da Busca */
 #hub .btn.primary,#cpApp .btn.primary,#cpApp .subabas button.on,#hub .hub-cont .hub-ico{background:#0f766e;border-color:#0f766e;color:#fff;}
 :root[data-tema="escuro"] #hub .btn.primary,:root[data-tema="escuro"] #cpApp .btn.primary,:root[data-tema="escuro"] #cpApp .subabas button.on,:root[data-tema="escuro"] #hub .hub-cont .hub-ico{background:var(--teal);border-color:var(--teal);color:#042f2e;}
@@ -5661,9 +5671,12 @@ function avisosTopo(){let h="";
 // faixa vermelha: este aparelho está com versão antiga (a nuvem pede mais nova) ou outro aparelho da família está há pouco tempo com versão antiga
 function avisoVersao(){let h="";
   if(CP.sync.status==="erro"&&/vers[ãa]o mais nova|vers[ãa]o antiga/i.test(CP.sync.msg||""))h+=`<div class="card" role="alert" style="border-color:var(--rose)"><b>⚠ Este aparelho está com o app desatualizado</b><p class="note" style="margin-top:4px">Ele não consegue trocar a lista com os outros. <b>Feche o app por completo e abra de novo.</b></p></div>`;
-  try{const meu=CP.eu().id,agora=Date.now();const velhos=Object.entries(state._aparelhos||{}).filter(([id,a])=>id!==meu&&a&&typeof a==="object"&&agora-(+a.visto||0)<3*86400000&&cmpVersao(a.versao||"",APP_VERSAO_TXT)<0);
-    if(velhos.length)h+=`<div class="card cp-aviso"><b>📱 Versão antiga em outro aparelho:</b> ${velhos.map(([,a])=>esc(a.nome||"?")).join(", ")}. Peça para fechar o app por completo e abrir de novo, senão a lista pode não atualizar lá.</div>`;}catch(e){}
+  // outro aparelho com versão antiga: só avisa se ele foi visto nas últimas 6 h (aparelho desligado não é problema) e dá para esconder
+  try{const meu=CP.eu().id,agora=Date.now();let esc_={};try{esc_=JSON.parse(localStorage.getItem(KEY+"__compras_velho")||"{}")||{};}catch(e){}
+    const velhos=Object.entries(state._aparelhos||{}).filter(([id,a])=>id!==meu&&a&&typeof a==="object"&&agora-(+a.visto||0)<6*3600000&&cmpVersao(a.versao||"",APP_VERSAO_TXT)<0&&esc_[id]!==a.versao);
+    if(velhos.length)h+=`<div class="card cp-aviso"><b>📱 Versão antiga em outro aparelho:</b> ${velhos.map(([,a])=>esc(a.nome||"?")).join(", ")}. Peça para fechar o app por completo e abrir de novo, senão a lista pode não atualizar lá. <button class="btn cp-mini" onclick="CP.esconderVelho()">Esconder</button></div>`;}catch(e){}
   return h;}
+CP.esconderVelho=function(){try{const m={};Object.entries(state._aparelhos||{}).forEach(([id,a])=>{if(a&&typeof a==="object"&&cmpVersao(a.versao||"",APP_VERSAO_TXT)<0)m[id]=a.versao;});localStorage.setItem(KEY+"__compras_velho",JSON.stringify(m));}catch(e){}CP.render();};
 CP.salvarNomeInicial=function(){const n=val("cpNomeInicial").trim();if(!n){alert("Digite um nome.");return;}CP.definirEu(n);CP.render();};
 CP.render=function(){const el=$("cpApp");if(!el||!listaAberta())return;
   CP.renderPendente=false;limparGraficos();
