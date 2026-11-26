@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-5";
+const APP_VERSAO_TXT="2026.11.26-6";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4510,7 +4510,11 @@ input.sem-preco{border-color:var(--rose)!important;}
   #cpApp table.tb-cards td[data-l]::before{content:attr(data-l);color:var(--mut);font-size:12px;text-align:left;}
 }
 .bp-busca{display:flex;gap:6px;} .bp-busca #bpTermo,.bp-busca #bpEnd{flex:1;min-width:0;}
-.bp-cand{padding:6px 0;} .cp-passos ol li{margin:2px 0;}
+.bp-cand{padding:6px 0;}
+.bp-h{font-size:16px;margin:0 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;} .bp-n{display:inline-block;background:var(--card2);border:1px solid var(--borda3);border-radius:12px;padding:2px 8px;font-size:12px;font-weight:700;}
+.bp-opcao{display:block;width:100%;text-align:left;min-height:44px;margin:6px 0;white-space:normal;} .btn[disabled]{opacity:.55;cursor:not-allowed;}
+.bp-mais>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;padding:0 6px;} .bp-velha{opacity:.8;} .cp-idade.ambar{color:#b45309;} .cp-idade.cinza{color:var(--mut);}
+#bpResTit:focus{outline:2px solid #0f766e;outline-offset:2px;} .cp-passos ol li{margin:2px 0;}
 .bp-oferta{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border2);}
 .bp-oferta img,.bp-sem-img{width:56px;height:56px;flex:0 0 56px;border-radius:10px;object-fit:contain;background:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;}
 .bp-sem-img{background:var(--card2);} .bp-info{flex:1;min-width:0;} .bp-info .pill{margin-right:4px;}
@@ -4610,7 +4614,7 @@ HUB.abrir=function(q){HUB.erro="";
     if(q==="casa"){modo("modo-casa");try{render();}catch(e){}}
     else{modo("modo-cp");CP.absorver();
       if(q==="lista"){CP.render();CP.sincronizar().then(()=>{if(atual==="lista")CP.renderFundo();});}
-      else BP.render();
+      else (BP.abrir?BP.abrir():BP.render());
       // a tela não pode ficar em branco: se o módulo não desenhou nada, volta para a tela inicial dizendo o motivo
       const el=document.getElementById("cpApp");if(!el||!String(el.innerHTML).trim())throw new Error((window.__erroModulo||["a tela não carregou"]).join(" | "));}
   }catch(e){HUB.erro="Não consegui abrir "+(q==="lista"?"a Lista de compras":"a Busca de produto")+": "+(e&&e.message||e);HUB.mostrar();return;}
@@ -5082,15 +5086,18 @@ CP.resumoPrecos=function(){return CP.vivos("produtos").map(p=>{const h=CP.histor
 
 // ---------- inteligência simples, sem IA ----------
 // estimativa da lista pelos preços que você já pagou
-CP.previaLista=function(lid){let total=0,com=0,sem=0;
+CP.previaLista=function(lid){let total=0,com=0,sem=0,velhos=0;
   let ref=0;
   CP.itensDa(lid).filter(i=>i.estado!=="faltou"&&i.estado!=="dispensado").forEach(i=>{
     // preço de referência da análise "Comparar mercados" (consulta nos sites, de até 2 dias atrás) vale mais que o último preço pago
     const pr=i.precoRef&&+i.precoRef.p>0&&dias(i.precoRef.d,hoje())<=2?i.precoRef:null;
     if(pr){total+=pr.p*(+i.qtd||1);com++;ref++;return;}
     const u=i.produtoId&&CP.ultimoPreco(i.produtoId);
-    if(u){total+=u.vUnit*(+i.qtd||1);com++;}else sem++;});
-  return{total:r2(total),com,sem,ref};};
+    if(u){total+=u.vUnit*(+i.qtd||1);com++;if(u.data&&dias(u.data,hoje())>30)velhos++;}else sem++;});
+  return{total:r2(total),com,sem,ref,velhos};}; // velhos = itens estimados por um preço de nota com mais de 30 dias
+// idade de um preço guardado (data AAAA-MM-DD): texto + faixa (≤7 dias normal · 8–30 âmbar · >30 cinza)
+CP.idadePreco=function(data){const d=data?dias(data,hoje()):null;if(d==null||!Number.isFinite(d))return{txt:"data desconhecida",faixa:"ambar",dias:null};
+  const t=d<=0?"hoje":d===1?"ontem":"há "+d+" dias";return d<=7?{txt:t,faixa:"",dias:d}:d<=30?{txt:t+" · pode ter mudado",faixa:"ambar",dias:d}:{txt:t+" · preço antigo, confirme antes de decidir",faixa:"cinza",dias:d};};
 // reposição: produtos comprados em intervalos regulares, já perto da hora de comprar de novo
 CP.sugestoesReposicao=function(lid){const naLista=new Set(lid?CP.itensDa(lid).map(i=>i.produtoId):[]);const h=hoje();const out=[];
   const datas=mapa();CP.comprasVivas().forEach(c=>(c.itens||[]).forEach(x=>{if(!x.produtoId)return;(datas[x.produtoId]=datas[x.produtoId]||new Set()).add(c.data);}));
@@ -5754,8 +5761,8 @@ CP.lerNota=function(entrada){
 // https sempre; http só no próprio computador (teste local)
 CP.urlIntermediarioOk=u=>/^(https:\/\/[a-z0-9.-]+|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?)(\/[\w./-]*)?$/i.test(String(u||""));
 CP.temIntermediario=()=>CP.urlIntermediarioOk(CP.config().worker);
-CP.viaIntermediario=async function(alvo){const w=CP.config().worker.replace(/\/+$/,"");
-  const pedido=w+"/?u="+encodeURIComponent(alvo),opt={cache:"no-store",credentials:"omit",referrerPolicy:"no-referrer"};
+CP.viaIntermediario=async function(alvo,extra){const w=CP.config().worker.replace(/\/+$/,"");
+  const pedido=w+"/?u="+encodeURIComponent(alvo)+(extra||""),opt={cache:"no-store",credentials:"omit",referrerPolicy:"no-referrer"};
   let r;try{r=await(CP.fetchT?CP.fetchT(pedido,opt,15000,"do intermediário"):fetch(pedido,opt));}
   catch(e){if(e&&!e.tempo&&!e.sem){e.sem=true;e.message="Não consegui falar com o intermediário (sem conexão ou endereço errado). "+(e.message||"");}throw e;}
   if(!r.ok){const x=new Error("O intermediário respondeu "+r.status+(r.status===403?" (endereço não permitido ou origem do app não liberada)":""));x.status=r.status;throw x;}
@@ -6109,11 +6116,11 @@ function telaLista(){
     return `<div class="cp-item ${ok?"ok":""}" data-ancora="${esc(i.id)}">
       <button class="cp-check" role="checkbox" aria-checked="${ok?"true":"false"}" aria-label="${esc(i.nome)}" onclick="CP.pegar('${A(i.id)}','${ok?"pendente":"pego"}')">${ok?"✓":""}</button>
       <div class="cp-nome" role="button" tabindex="0" aria-label="editar ${esc(i.nome)}" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();CP.editar('${A(i.id)}')}" onclick="CP.editar('${A(i.id)}')"><span class="cp-emo" aria-hidden="true">${esc(emojiDe(i))}</span><b>${esc(i.nome)}</b> <span class="note" style="margin:0">${esc(fmtQtd(i.qtd))} ${esc(i.un||"un")}</span> ${tag}${i.aMais?' <span class="pill rose">a mais</span>':""}${(()=>{try{const m=CP.mercadoDoItem(i);return m?` <span class="pill">📍 ${esc(CP.nomeMercado(m))}</span>`:"";}catch(e){return"";}})()}
-        <div class="note" style="margin:0">${ok&&i.pegoPor?"✓ "+esc(i.pegoPor)+(i.pegoEm?" às "+new Date(i.pegoEm).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""):i.resp?"🙋 "+esc(i.resp):""}${u?` · últ. ${F(u.vUnit)} (${esc(u.mercado)}, ${dataBR(u.data)})`:""}</div>${precoItemHtml(i)}</div>
+        <div class="note" style="margin:0">${ok&&i.pegoPor?"✓ "+esc(i.pegoPor)+(i.pegoEm?" às "+new Date(i.pegoEm).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""):i.resp?"🙋 "+esc(i.resp):""}${u?(()=>{const f=CP.idadePreco(u.data);return` · últ. ${F(u.vUnit)} (${esc(u.mercado)}, ${dataBR(u.data)} · <span class="cp-idade ${f.faixa}">${esc(f.txt)}</span>)`;})():""}</div>${precoItemHtml(i)}</div>
     </div>${ui.editando===i.id?editorItem(i):""}`;};
   return `<div class="card">${cardVR()}
       <div class="cp-prev">🧮 Estimativa desta lista: <b id="cpEstTotal">${F(pv.total)}</b>${pv.sem?` <span class="note" style="margin:0">(${pv.sem} item(ns) ainda sem preço conhecido)</span>`:""}
-      <span class="note" style="margin:0" id="cpEstRef">${pv.ref?` (${CP.fmtNum(pv.ref,0)} com preço de hoje da busca)`:""}</span>${orcHtml(l,pv,r)}<div id="cpAutoBox">${autoLinha()}</div></div></div>
+      <span class="note" style="margin:0" id="cpEstRef">${pv.ref?` (${CP.fmtNum(pv.ref,0)} com preço de hoje da busca)`:""}</span><span class="note cp-idade ambar" style="margin:0" id="cpEstVelhos">${pv.velhos?` ⚠ ${CP.fmtNum(pv.velhos,0)} ${pv.velhos===1?"item usa":"itens usam"} preço de nota com mais de 30 dias`:""}</span>${orcHtml(l,pv,r)}<div id="cpAutoBox">${autoLinha()}</div></div></div>
     ${blocoPrecos(l,pend.length)}
     <div class="card">
       <div class="flexbet"><div class="row">${abertas.length>1?`<select onchange="CP.ui.lista=this.value;CP.render()">${abertas.map(x=>`<option value="${esc(x.id)}" ${x.id===l.id?"selected":""}>${esc(x.nome)}</option>`).join("")}</select>`:`<h3 style="margin:0">${esc(l.nome)}</h3>`}
@@ -6150,8 +6157,8 @@ function editorItem(i){return `<div class="cp-editor">
 // São só consultas: nada disto é gravado como compra nem entra no histórico de preços.
 const precosDaLista=lid=>{try{const R=typeof BP!=="undefined"&&BP.st&&BP.st.precosLista;return R&&R.listaId===lid?R:null;}catch(e){return null;}};
 // preço de hoje buscado sozinho ao adicionar o item (a oferta de menor preço por medida, ou da mesma embalagem que o nome pede)
-function autoPrecoHtml(i){try{const r=i.precoRef;if(i.estado!=="pendente"||!r||!r.k||CP.dias(r.d,CP.hoje())>2)return"";
-  return`<div class="note cp-preco-item cp-preco-auto" style="margin:0">💲 mais barato: <b>${esc(r.r)} ${F(r.p)}</b>${r.m?" ("+esc(r.m)+")":""} <span style="opacity:.8">· ${r.d===CP.hoje()?"hoje":esc(dataBR(r.d))}</span></div>`;}catch(e){return"";}}
+function autoPrecoHtml(i){try{const r=i.precoRef;if(i.estado!=="pendente"||!r||!r.k)return"";const dd=CP.dias(r.d,CP.hoje()),vel=dd>2;
+  return`<div class="note cp-preco-item cp-preco-auto" style="margin:0">💲 ${vel?"preço antigo":"mais barato"}: <b>${esc(r.r)} ${F(r.p)}</b>${r.m?" ("+esc(r.m)+")":""} <span class="cp-idade ${vel?(dd>30?"cinza":"ambar"):""}">· ${dd<=0?"consultado hoje":dd===1?"consultado ontem":"consultado há "+dd+" dias ("+esc(dataBR(r.d))+")"}${vel?" — pode ter mudado":""}</span>${vel?` <button class="btn cp-mini" onclick="try{BP.autoPreco(CP.ui.lista)}catch(e){}">↻ atualizar</button>`:""}</div>`;}catch(e){return"";}}
 const autoLinha=()=>{try{const a=BP.auto;if(!a)return"";if(a.estado==="buscando")return`<div class="note" role="status" id="cpAutoMsg" style="margin:4px 0 0">⏳ Buscando os preços de hoje (${CP.fmtNum(a.n,0)} ${a.n===1?"item":"itens"})…</div>`;
   return a.msg?`<div class="note" role="status" id="cpAutoMsg" style="margin:4px 0 0">ℹ️ ${esc(a.msg)}</div>`:"";}catch(e){return"";}};
 CP.autoPrecoHtml=autoPrecoHtml;CP.autoLinha=autoLinha;
@@ -6684,12 +6691,16 @@ BP.km=function(a,b){if(!a||!b||a.lat==null||b.lat==null)return null;const R=6371
   return Math.round(2*R*Math.asin(Math.sqrt(s))*10)/10;};
 
 // ---------- localização ----------
-BP.localizar=async function(){st.carregando="localização";st.erro="";BP.render();
+BP.localizar=async function(){st.gpsBusy=true;st.erro="";st.semDist=false;BP.render();
   try{const p=await CP.posicao();st.pos={lat:r3(p.lat),lon:r3(p.lon),prec:Math.round(p.prec),em:Date.now(),fonte:"gps"};
     try{localStorage.setItem(CH_POS,JSON.stringify(st.pos));}catch(e){}
-    st.lugar="";await Promise.all([BP.mercadosPerto(true),lugarAproximado()]);BP.catalogoAgendar(300);}
-  catch(e){st.erro=e.message+" Você pode digitar um endereço abaixo.";}
-  st.carregando="";BP.render();};
+    st.lugar="";st.gpsBusy=false;st.editEnd=false;BP.render();BP.foco("bpTermo");}
+  catch(e){st.gpsBusy=false;st.erro=e.message+" Você pode digitar um endereço no passo 1.";st.editEnd=true;BP.render();BP.foco("bpEnd");return;}
+  await posFundo(true);};
+// mapa (mercados perto) e endereço aproximado em SEGUNDO PLANO: a posição já está na tela e a busca de preços não espera por eles
+async function posFundo(forcar){const eu=st.pos;
+  await Promise.all([BP.mercadosPerto(forcar).then(()=>{if(st.pos===eu)BP.refazerDistancias();},()=>{}),(eu.fonte==="gps"?lugarAproximado().then(()=>{if(st.pos===eu)BP.atualizarLugar();}):Promise.resolve())]);
+  try{BP.catalogoAgendar(300);}catch(e){}}
 // ---------- Nominatim (OpenStreetMap): no máximo 1 pedido por segundo, um de cada vez ----------
 // (a política de uso do serviço pede isso; o navegador não deixa trocar o User-Agent, então a identificação é a do próprio app)
 BP.geoMs=1100;let geoUlt=0,geoFila=Promise.resolve();
@@ -6719,9 +6730,9 @@ BP.buscarEndereco=async function(){const q=val("bpEnd").replace(/\s+/g," ").trim
   catch(e){st.endMsg="Não consegui procurar o endereço agora ("+BP.erroCurto(e)+"). Tente de novo ou use a localização do aparelho.";}
   st.carregando="";BP.render();};
 BP.usarEndereco=async function(i){const c=st.cand[i];if(!c)return;deduzCidade(c.addr);
-  st.pos={lat:r3(c.lat),lon:r3(c.lon),prec:100,em:Date.now(),fonte:"endereco",lugar:c.curto};st.lugar=c.curto;st.cand=[];st.endMsg="";st.erro="";
+  st.pos={lat:r3(c.lat),lon:r3(c.lon),prec:100,em:Date.now(),fonte:"endereco",lugar:c.curto};st.lugar=c.curto;st.cand=[];st.endMsg="";st.erro="";st.editEnd=false;st.semDist=false;
   try{localStorage.setItem(CH_POS,JSON.stringify(st.pos));}catch(e){}
-  st.carregando="mercados no mapa";BP.render();await BP.mercadosPerto(true);st.carregando="";BP.render();};
+  BP.render();BP.foco("bpTermo");await posFundo(true);};
 BP.voltarGPS=function(){st.cand=[];st.endMsg="";return BP.localizar();};
 
 // ---------- lista de mercados da cidade DO USUÁRIO (registros cat-<slug> da própria Lista; nada embutido no app) ----------
@@ -6782,15 +6793,20 @@ BP.mercadosPerto=async function(forcar){if(!st.pos)return[];const raio=CP.config
   try{const c=JSON.parse(localStorage.getItem(CH_OSM)||"null");if(!forcar&&c&&c.chave===chave&&Array.isArray(c.lista)&&Date.now()-(+c.em||0)<86400000){st.perto=c.lista;st.osm={estado:"ok",erro:"",em:+c.em||Date.now()};return st.perto;}}catch(e){}
   // consulta leve (o Overpass público derruba pedidos pesados): só mercados com nome, no máximo 40, raio de no máximo 10 km
   const q=`[out:json][timeout:10];nwr["shop"~"^(supermarket|wholesale|convenience)$"]["name"](around:${Math.round(Math.min(raio,10)*1000)},${st.pos.lat},${st.pos.lon});out center 40;`;
-  let j=null,ult=null;
-  for(const base of OVERPASS){try{
-      const uo=base+"?data="+encodeURIComponent(q),oo={referrerPolicy:"no-referrer"};
-      const r=await(CP.fetchT?CP.fetchT(uo,oo,12000,"do mapa (OpenStreetMap)"):fetch(uo,oo));
-      if(!r.ok){const x=new Error("o mapa respondeu "+r.status);x.status=r.status;throw x;}
-      const t=await r.json();
-      // o Overpass sobrecarregado responde 200 com lista vazia e um aviso ("runtime error"): isso é FALHA, não "zero mercados"
-      if(!t||typeof t!=="object"||!Array.isArray(t.elements)||(!t.elements.length&&/runtime error|timed out|too busy|rate_limited/i.test(String(t.remark||""))))throw new Error("o mapa está sobrecarregado agora");
-      j=t;break;}catch(e){ult=e;}}
+  let ult=null;
+  // 1º espelho já; se não responder em BP.hedgeMs (ou falhar), o próximo entra em paralelo; vale a 1ª resposta válida
+  const tenta=async base=>{const uo=base+"?data="+encodeURIComponent(q),oo={referrerPolicy:"no-referrer"};
+    const r=await(CP.fetchT?CP.fetchT(uo,oo,12000,"do mapa (OpenStreetMap)"):fetch(uo,oo));
+    if(!r.ok){const x=new Error("o mapa respondeu "+r.status);x.status=r.status;throw x;}
+    const t=await r.json();
+    // o Overpass sobrecarregado responde 200 com lista vazia e um aviso ("runtime error"): isso é FALHA, não "zero mercados"
+    if(!t||typeof t!=="object"||!Array.isArray(t.elements)||(!t.elements.length&&/runtime error|timed out|too busy|rate_limited/i.test(String(t.remark||""))))throw new Error("o mapa está sobrecarregado agora");
+    return t;};
+  const j=await new Promise(fim=>{let i=0,vivos=0,feito=false,tm=0;
+    const prox=()=>{if(feito||i>=OVERPASS.length)return false;const base=OVERPASS[i++];vivos++;clearTimeout(tm);
+      tenta(base).then(t=>{if(!feito){feito=true;clearTimeout(tm);fim(t);}},e=>{ult=e;vivos--;if(feito)return;if(!prox()&&vivos<=0){feito=true;clearTimeout(tm);fim(null);}});
+      if(i<OVERPASS.length)tm=setTimeout(()=>{if(!feito)prox();},BP.hedgeMs);return true;};
+    prox();});
   if(!j){st.osm={estado:"falhou",erro:BP.erroCurto(ult),em:Date.now()};return st.perto;}
   st.perto=(j.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??(e.center&&e.center.lat),lon=e.lon??(e.center&&e.center.lon);
     const nome=t.name||t.brand||"Mercado";return{nome:String(nome).slice(0,80),rede:CP.redeDe((t.brand||"")+" "+nome)||nomeCadastrado((t.brand||"")+" "+nome),lat,lon,
@@ -6817,41 +6833,46 @@ let memCache={}; // se o navegador não deixar usar sessionStorage, o cache de 1
 function lerCache(){try{const c=JSON.parse(sessionStorage.getItem(CH_CACHE)||"{}");return c&&typeof c==="object"&&!Array.isArray(c)?c:{};}catch(e){return memCache;}}
 function gravarCache(c){memCache=c;try{sessionStorage.setItem(CH_CACHE,JSON.stringify(c));}catch(e){}}
 // transforma a resposta do site em ofertas limpas (só os campos usados; nada vira HTML)
-BP.lerVtex=function(json,rede,base,termo){const out=[];if(!Array.isArray(json))return out;
+BP.lerVtex=function(json,rede,base,termo,desc){const out=[];if(!Array.isArray(json))return out;
   json.forEach(p=>{try{const it=(p.items||[])[0]||{},sel=(it.sellers||[]).find(s=>s.sellerDefault)||(it.sellers||[])[0]||{},o=sel.commertialOffer||{};
-    const preco=+o.Price||0,de=+o.ListPrice||0;if(!(preco>0)||!(+o.AvailableQuantity>0))return;
-    const nome=String(p.productName||"").slice(0,120);const sim=CP.semelhanca(termo,nome);if(sim<.6)return;
+    const preco=+o.Price||0,de=+o.ListPrice||0;const vu=Date.parse(o.PriceValidUntil||""),ate=Number.isFinite(vu)&&vu-Date.now()<120*86400000?vu:0;
+    /* validade só quando é data de verdade (o site às vezes manda 2099) */ if(!(preco>0)||!(+o.AvailableQuantity>0))return;
+    const nome=String(p.productName||"").slice(0,120);const sim=CP.semelhanca(termo,nome);if(sim<.6){if(desc&&desc.length<30)desc.push((nome+" "+String(p.brand||"")).slice(0,100));return;}
+    const cat=String((Array.isArray(p.categories)&&p.categories[0])||"").split("/").map(x=>x.trim()).filter(Boolean)[0]||"";
     const img=((it.images||[])[0]||{}).imageUrl||"";const md=CP.embalagem(nome+" "+(it.name||""));
-    out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:String(it.ean||"").replace(/\D/g,"").slice(0,14),preco,de:de>preco?de:0,
+    out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:String(it.ean||"").replace(/\D/g,"").slice(0,14),cat:cat.slice(0,40),ate,vencido:!!(ate&&ate<Date.now()),preco,de:de>preco?de:0,
       porBase:md?CP.r2(preco/md.total):null,base:md?md.base:null,emb:md||null,img:IMG_OK.test(img)?img:"",link:base+"/"+encodeURIComponent(String(p.linkText||""))+"/p",sim,em:Date.now(),frescor:"agora"});}catch(e){}});
   return out;};
 // Tenda Atacado: lê o JSON que a página de busca traz em <script id="__NEXT_DATA__"> (props.initialMobxState.productStore.products).
 // Se o formato mudou (sem o script, JSON quebrado ou sem a lista de produtos) falha com frase clara; lista vazia = nenhum produto (normal).
 BP.TENDA_MUDOU="o site do Tenda mudou: não consegui ler os preços";
-BP.lerTenda=function(html,rede,base,termo){
-  const t=String(html==null?"":html),a=t.search(/<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>/i);if(a<0)throw new Error(BP.TENDA_MUDOU);
-  const ini=t.indexOf(">",a)+1,fim=t.indexOf("</scr"+"ipt>",ini);if(fim<0)throw new Error(BP.TENDA_MUDOU);
-  let d;try{d=JSON.parse(t.slice(ini,fim));}catch(e){throw new Error(BP.TENDA_MUDOU);}
+BP.lerTenda=function(html,rede,base,termo,desc){
+  const t=String(html==null?"":html);let d;
+  if(/^\s*\{/.test(t)){try{d=JSON.parse(t);}catch(e){throw new Error(BP.TENDA_MUDOU);}} // modo=tenda do intermediário novo: já vem só o JSON, enxuto
+  else{const a=t.search(/<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>/i);if(a<0)throw new Error(BP.TENDA_MUDOU);
+    const ini=t.indexOf(">",a)+1,fim=t.indexOf("</scr"+"ipt>",ini);if(fim<0)throw new Error(BP.TENDA_MUDOU);
+    try{d=JSON.parse(t.slice(ini,fim));}catch(e){throw new Error(BP.TENDA_MUDOU);}}
   const ps=d&&d.props&&d.props.initialMobxState&&d.props.initialMobxState.productStore,lista=ps&&(Array.isArray(ps.products)?ps.products:null);
   if(!lista)throw new Error(BP.TENDA_MUDOU);
   const out=[];
   lista.forEach(p=>{try{if(!p||typeof p!=="object")return;const preco=+p.price||0;if(!(preco>0)||p.isAvailable===false||(p.availability&&p.availability!=="in_stock"))return;
-    const nome=String(p.name||"").slice(0,120);if(!nome)return;const sim=CP.semelhanca(termo,nome);if(sim<.6)return;
+    const nome=String(p.name||"").slice(0,120);if(!nome)return;const sim=CP.semelhanca(termo,nome);if(sim<.6){if(desc&&desc.length<30)desc.push((nome+" "+String(p.brand||"")).slice(0,100));return;}
+    const c0=Array.isArray(p.categories)?p.categories[0]:p.category,cat=String((c0&&typeof c0==="object"?c0.name:c0)||"").slice(0,40);
     const md=CP.embalagem(nome),img=String(p.thumbnail||""),lk=String(p.url||"");
     const at=(Array.isArray(p.wholesalePrices)?p.wholesalePrices:[]).map(w=>({min:+(w&&w.minQuantity)||0,preco:+(w&&w.price)||0})).filter(w=>w.min>1&&w.preco>0&&w.preco<preco).sort((x,y)=>x.preco-y.preco)[0]||null;
-    out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:"",preco,de:0,atacado:at,
+    out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:"",cat,preco,de:0,atacado:at,
       porBase:md?CP.r2(preco/md.total):null,base:md?md.base:null,emb:md||null,img:IMG_OK.test(img)?img:"",
       link:/^https:\/\/(www\.)?tendaatacado\.com\.br\/produto\/[\w%.-]+$/i.test(lk)?lk:(p.token&&/^[\w%.-]+$/.test(String(p.token))?base+"/produto/"+p.token:base),sim,em:Date.now(),frescor:"agora"});}catch(e){}});
   return out;};
 async function buscarSite(rede,termo,ttl){const base=sitesAtivos()[rede];if(!base)throw new Error(rede+": site sem consulta");const cache=lerCache(),k=rede+"|"+CP.norm(termo);
   if(cache[k]&&Date.now()-cache[k].em<(ttl||30*60000))return cache[k].lista;
   BP.consultasFeitas=(BP.consultasFeitas||0)+1;
-  if(rede==="Tenda"){const r=await CP.viaIntermediario(base+"/busca?q="+encodeURIComponent(termo));
-    const lista=BP.lerTenda(r.texto,rede,base,termo);cache[k]={em:Date.now(),lista};gravarCache(cache);return lista;}
+  if(rede==="Tenda"){const r=await CP.viaIntermediario(base+"/busca?q="+encodeURIComponent(termo),"&modo=tenda&n=40"); // intermediário novo devolve só os produtos (poucos KB); o antigo ignora o pedido e devolve a página
+    const desc=[],lista=BP.lerTenda(r.texto,rede,base,termo,desc);cache[k]={em:Date.now(),lista,desc};gravarCache(cache);return lista;}
   const u=base+"/api/catalog_system/pub/products/search?ft="+encodeURIComponent(termo)+"&_from=0&_to=19";
   const r=await CP.viaIntermediario(u);let j;try{j=JSON.parse(r.texto);}catch(e){throw new Error(rede+": resposta inesperada do site");}
   if(!Array.isArray(j))throw new Error(rede+": resposta inesperada do site");
-  const lista=BP.lerVtex(j,rede,base,termo);cache[k]={em:Date.now(),lista};gravarCache(cache);return lista;}
+  const desc=[],lista=BP.lerVtex(j,rede,base,termo,desc);cache[k]={em:Date.now(),lista,desc};gravarCache(cache);return lista;}
 BP.buscarSite=buscarSite;
 // até 3 pedidos ao mesmo tempo (educado com os sites e com o plano grátis)
 async function emLotes(tarefas,n,aoTerminar){const res=[];let i=0,feitos=0;await Promise.all(Array.from({length:n},async()=>{while(i<tarefas.length){const k=i++;try{res[k]=await tarefas[k]();}catch(e){res[k]={erro:BP.erroCurto(e)};}feitos++;if(aoTerminar){try{aoTerminar(feitos,tarefas.length);}catch(e){}}}}));return res;}
@@ -6876,9 +6897,10 @@ BP.ranquear=function(ofertas,qtd,lojas,cfg){qtd=+qtd||1;
   const todosBase=ofertas.length&&ofertas.every(o=>o.porBase&&o.base===ofertas[0].base);
   const chave=o=>todosBase&&!cfg.contarDeslocamento?o.porBase:o.custo;
   ofertas.sort((a,b)=>chave(a)-chave(b)||(a.dist??99)-(b.dist??99));
-  if(ofertas.length){const barato=[...ofertas].sort((a,b)=>(todosBase?a.porBase-b.porBase:a.preco-b.preco))[0];barato.selo=(barato.selo||[]).concat("🏆 menor preço");
-    const perto=ofertas.filter(o=>o.dist!=null).sort((a,b)=>a.dist-b.dist)[0];if(perto)perto.selo=(perto.selo||[]).concat("📍 mais perto");
-    ofertas[0].selo=(ofertas[0].selo||[]).concat("⚖️ melhor no geral");}
+  const cand=st.incluirAntigos?ofertas:ofertas.filter(o=>!BP.antigo(o));
+  if(cand.length){const barato=[...cand].sort((a,b)=>(todosBase?a.porBase-b.porBase:a.preco-b.preco))[0];barato.selo=(barato.selo||[]).concat("🏆 menor preço");
+    const perto=cand.filter(o=>o.dist!=null).sort((a,b)=>a.dist-b.dist)[0];if(perto)perto.selo=(perto.selo||[]).concat("📍 mais perto");
+    cand[0].selo=(cand[0].selo||[]).concat("⚖️ melhor no geral");}
   return ofertas;};
 
 // ---------- honestidade: o que foi consultado de fato ----------
@@ -6890,53 +6912,167 @@ BP.ranquear=function(ofertas,qtd,lojas,cfg){qtd=+qtd||1;
 // o:{semIntermediario, foraDoRaio:[redes], raioKm}
 BP.situacaoFontes=function(consultas,historico,o){o=o||{};consultas=consultas||{};const hist=(historico||[]).filter(x=>x&&x.rede);
   const SA=sitesAtivos(),SL=sitesLink();const nomes=new Set([...Object.keys(SA),...Object.keys(SL),...hist.map(h=>h.rede)]);const hoje=CP.hoje();
-  const R={agora:"consultado agora","so-historico":"só histórico",indisponivel:"indisponível"};
+  const R={buscando:"buscando",agora:"consultado agora","so-historico":"só histórico",indisponivel:"indisponível"};
   return[...nomes].map(rede=>{const h=hist.filter(x=>x.rede===rede),ult=h.map(x=>x.data).filter(Boolean).sort().pop()||"";
     const f={rede,estado:"",rotulo:"",motivo:"",n:0,em:0,historicoN:h.length,historicoUltimo:ult,historicoIdadeDias:ult?CP.dias(ult,hoje):null,link:SA[rede]||SL[rede]||"",tipo:TEM(SA,rede)?"consulta":TEM(SL,rede)?"link":"historico",erroCurto:""};
     const q=TEM(consultas,rede)?consultas[rede]:null;
     if(TEM(SL,rede)){f.estado=h.length?"so-historico":"indisponivel";f.motivo="o site não deixa o app consultar (abra o link para ver os preços)";}
     else if(TEM(SA,rede)){
-      if(q&&q.ok){f.estado="agora";f.n=+q.n||0;f.em=+q.em||0;f.motivo=f.n?"":"o site respondeu, mas sem produto parecido disponível";}
+      if(q&&q.buscando){f.estado="buscando";f.motivo="";}
+      else if(q&&q.ok){f.estado="agora";f.n=+q.n||0;f.em=+q.em||0;f.motivo=f.n?"":"o site respondeu, mas sem produto parecido disponível";}
       else if(q&&q.erro){f.estado=h.length?"so-historico":"indisponivel";f.erroCurto=String(q.erro).slice(0,120);f.motivo="a consulta ao site falhou: "+f.erroCurto;}
       else if(o.semIntermediario){f.estado=h.length?"so-historico":"indisponivel";f.motivo="o intermediário não está configurado (Lista de compras → Ajustes)";}
       else if((o.foraDoRaio||[]).includes(rede)){f.estado=h.length?"so-historico":"indisponivel";f.motivo="nenhuma loja dentro do raio"+(o.raioKm?" de "+CP.nBR(o.raioKm,1)+" km":"")+": não consultei";}
       else{f.estado=h.length?"so-historico":"indisponivel";f.motivo="não foi consultado nesta busca";}}
     else{f.estado="so-historico";f.motivo="sem consulta automática: valem só os preços das suas notas";}
     f.rotulo=R[f.estado];return f;})
-    .sort((a,b)=>["agora","so-historico","indisponivel"].indexOf(a.estado)-["agora","so-historico","indisponivel"].indexOf(b.estado)||a.rede.localeCompare(b.rede,"pt-BR"));};
+    .sort((a,b)=>["buscando","agora","so-historico","indisponivel"].indexOf(a.estado)-["buscando","agora","so-historico","indisponivel"].indexOf(b.estado)||a.rede.localeCompare(b.rede,"pt-BR"));};
 // uma linha por mercado, em português simples: {ic, txt, link}
 BP.linhaFonte=function(f){const hist=f.historicoN>0,n0=CP.fmtNum;
+  if(f.estado==="buscando")return{ic:"⏳",txt:"buscando…",link:""};
   if(f.estado==="agora")return{ic:"🟢",txt:f.n?"consultado agora, "+n0(f.n,0)+(f.n===1?" produto":" produtos"):"consultado agora, nenhum produto parecido disponível",link:""};
   if(f.tipo==="link")return{ic:"⚪",txt:"o site não deixa o app consultar"+(hist?" (mostrando só o seu histórico)":""),link:f.link};
   if(f.tipo==="historico")return{ic:"⚪",txt:"sem consulta automática: valem só os preços das suas notas",link:""};
   if(f.erroCurto)return{ic:"🟡",txt:"não respondeu agora ("+f.erroCurto+"), "+(hist?"mostrando só o seu histórico":"sem histórico seu"),link:f.link};
   return{ic:"⚪",txt:String(f.motivo||"não foi consultado nesta busca"),link:f.link};};
+// ---------- frescor do preço: NENHUM preço aparece sem data/idade ----------
+// site: hora da consulta (a original, se veio do cache de 30 min) + validade quando o site informa; nota: data paga + idade.
+// ≤7 dias normal · 8–30 âmbar "pode ter mudado" · >30 cinza "preço antigo" · validade vencida = "vencido". Data desconhecida = âmbar (não some, mas avisa).
+const dBR=iso=>{const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso||""));return m?m[3]+"/"+m[2]:"";};
+const dBRms=ms=>{const d=new Date(ms);return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0");};
+const mesmoDia=(a,b)=>{const x=new Date(a),y=new Date(b);return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate();};
+BP.frescor=function(o){o=o||{};
+  if(o.fonte==="site"){const em=+o.em||0;
+    if(o.vencido)return{ic:"⚠️",txt:"preço vencido (valia até "+(o.ate?dBRms(o.ate):"?")+") — confirme no site",cls:"ambar",antigo:true};
+    if(!em)return{ic:"❔",txt:"data desconhecida",cls:"ambar",antigo:false};
+    const hoje=mesmoDia(em,Date.now());let q="";try{q=HUB.quando(em);}catch(e){}if(!q)q=hoje?"hoje":dBRms(em);
+    const val=o.ate?" · preço válido até "+dBRms(o.ate):"";
+    return hoje?{ic:"🌐",txt:"consultado "+q+val,cls:"",antigo:false}:{ic:"🕓",txt:"consultado "+q+" — preço de outro dia"+val,cls:"cinza",antigo:true};}
+  const dias=o.idadeDias!=null?+o.idadeDias:(o.data?CP.dias(o.data,CP.hoje()):null);
+  if(dias==null||!Number.isFinite(dias))return{ic:"❔",txt:"data desconhecida",cls:"ambar",antigo:false};
+  const dt=dBR(o.data),idade=dias<=0?"hoje":dias===1?"ontem":"há "+dias+" dias",base="pago por você"+(dt?" em "+dt:"")+" · "+idade;
+  if(dias<=7)return{ic:"🧾",txt:base,cls:"",antigo:false};
+  if(dias<=30)return{ic:"⚠️",txt:base+" · pode ter mudado",cls:"ambar",antigo:false};
+  return{ic:"🕓",txt:base+" · preço antigo — confirme antes de decidir",cls:"cinza",antigo:true};};
+BP.antigo=o=>BP.frescor(o).antigo;
+
+// ---------- "você quis dizer…?" (antes da busca completa: 1 consulta leve, no cache de 30 min, que a busca completa reaproveita) ----------
+const CH_DES=KEY+"__busca_desamb";
+function lerDes(){try{const c=JSON.parse(localStorage.getItem(CH_DES)||"{}");return c&&typeof c==="object"&&!Array.isArray(c)?c:{};}catch(e){return{};}}
+function gravarDes(c){const ks=Object.keys(c);if(ks.length>40)ks.sort((a,b)=>(c[a].em||0)-(c[b].em||0)).slice(0,ks.length-40).forEach(k=>delete c[k]);try{localStorage.setItem(CH_DES,JSON.stringify(c));}catch(e){}}
+BP.memoDes=termo=>{const e=lerDes()[CP.norm(termo)];return e&&typeof e==="object"&&Date.now()-(+e.em||0)<30*86400000?e:null;};
+const guardarDes=(termo,t,rot)=>{const c=lerDes();c[CP.norm(termo)]={t:t||"",rot:String(rot||"").slice(0,60),em:Date.now()};gravarDes(c);};
+const toks=s=>CP.norm(s).replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(Boolean);
+const SOBRA=/^(\d+([.,]\d+)?(ml|l|lt|lts|kg|g|gr|grs|un|und|unid|x|c|cx|pcs|pct)?|ml|l|lt|kg|g|gr|un|und|unid|unidade|unidades|lata|latas|garrafa|garrafas|pet|pack|fardo|caixa|cx|com|de|da|do|dos|das|e|para|pct|pacote|long|neck|sleeve)$/;
+const titulo=s=>String(s).replace(/\S+/g,w=>w.charAt(0).toUpperCase()+w.slice(1));
+const icDept=d=>{const n=CP.norm(d||"");return/bebida|cerveja|vinho|suco|refri/.test(n)?"🥤":/limpeza|lavanderia|casa/.test(n)?"🧽":/perfum|higiene|beleza|cuidado/.test(n)?"🧴":/hortifruti|fruta|legume/.test(n)?"🥬":/carne|acougue|peixe/.test(n)?"🥩":/frio|laticin|queijo/.test(n)?"🧀":/padaria|pao/.test(n)?"🥖":/pet/.test(n)?"🐾":/congelado/.test(n)?"🧊":/mercearia|alimento/.test(n)?"🛒":"🏷️";};
+// agrupa os produtos achados por LINHA: marca (sem as palavras da busca) ou, sem marca, as 1–2 palavras que seguem o termo.
+// É ambíguo quando há 2+ linhas relevantes (≥2 produtos ou ≥20%) que caem em DEPARTAMENTOS diferentes (marcas diferentes do mesmo produto, como arroz Camil × Tio João, NÃO perguntam).
+BP.agruparLinhas=function(lista,termo){const q=new Set(toks(termo)),G={};let total=0;
+  (lista||[]).forEach(o=>{if(!o||!o.nome)return;total++;const t=toks(o.nome),ok=w=>!q.has(w)&&!SOBRA.test(w)&&w.length>1;
+    let ch=toks(o.marca).filter(ok).slice(0,2);
+    if(!ch.length){const i=t.findIndex(w=>q.has(w));const dep=t.slice(i+1).filter(ok);ch=(dep.length?dep:t.filter(ok)).slice(0,2);}
+    if(!ch.length)return;const k=ch.join(" ");const sec=CP.secaoDe(o.nome);
+    const dp=o.cat?{k:CP.norm(o.cat),r:o.cat}:(sec!=="Outros"?{k:CP.norm(sec),r:sec}:null);
+    const g=G[k]||(G[k]={k,n:0,redes:new Set(),ex:o.nome,deps:{}});g.n++;g.redes.add(o.rede||"");if(dp){const d=g.deps[dp.k]||(g.deps[dp.k]={r:dp.r,n:0});d.n++;}});
+  const gs=Object.values(G).map(g=>{const d=Object.values(g.deps).sort((a,b)=>b.n-a.n)[0];return{k:g.k,n:g.n,mercados:g.redes.size,ex:g.ex,dept:d?d.r:"",deptK:d?CP.norm(d.r):""};})
+    .filter(g=>g.n>=2||(total&&g.n/total>=.2)).sort((a,b)=>b.n-a.n||b.mercados-a.mercados||a.deptK.localeCompare(b.deptK)||a.k.localeCompare(b.k)).slice(0,5);
+  const depts=new Set(gs.map(g=>g.deptK).filter(Boolean));
+  gs.forEach(g=>{g.termo=(String(termo).trim()+" "+g.k).replace(/\s+/g," ");g.rot=titulo(g.termo);g.ic=icDept(g.dept);});
+  return{grupos:gs,total,ambiguo:gs.length>=2&&depts.size>=2};};
+const lev=(a,b)=>{const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i]);for(let j=1;j<=n;j++)d[0][j]=j;
+  for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n];};
+// correção simples de digitação: troca a palavra que ninguém conhece pela mais parecida (≤2 letras de diferença) entre as palavras do que o site devolveu e do seu histórico
+BP.sugerir=function(termo,descartados){const voc=new Set();
+  (descartados||[]).forEach(x=>toks(x).forEach(w=>voc.add(w)));
+  try{CP.vivos("produtos").forEach(p=>toks(p.nome).forEach(w=>voc.add(w)));}catch(e){}
+  const orig=String(termo).trim().split(/\s+/);let mudou=false;
+  const novo=orig.map(w=>{const n=CP.norm(w);if(n.length<5||voc.has(n))return w;let melhor=null,dm=3;
+    voc.forEach(v=>{if(v.length>=4&&v[0]===n[0]&&Math.abs(v.length-n.length)<=2){const d=lev(n,v);if(d<dm||(d===dm&&melhor&&v<melhor)){dm=d;melhor=v;}}});
+    if(melhor&&dm<=2){mudou=true;return melhor;}return w;});
+  return mudou?novo.join(" "):"";};
+const latRede={};
+BP.limiteMercadoMs=10000;BP.hedgeMs=3500;
+// 1 pedido (o que já está no cache, senão o mercado que respondeu mais rápido) → {grupos}|{sugestao}|null
+async function analisar(termo){const sites=sitesAtivos(),vt=Object.keys(sites).filter(r=>r!=="Tenda"),pool=vt.length?vt:Object.keys(sites);if(!pool.length)return null;
+  const cache=lerCache(),k=r=>r+"|"+CP.norm(termo),fresco=r=>cache[k(r)]&&Date.now()-cache[k(r)].em<30*60000;
+  const rede=pool.find(fresco)||pool.slice().sort((a,b)=>(latRede[a]??5e3)-(latRede[b]??5e3))[0];
+  const t0=Date.now();let lista,tm;
+  try{lista=await Promise.race([buscarSite(rede,termo),new Promise((_,no)=>{tm=setTimeout(()=>{const x=new Error("demorou");x.tempo=true;no(x);},BP.limiteMercadoMs);})]);}finally{clearTimeout(tm);}
+  latRede[rede]=Date.now()-t0;
+  if(!lista.length){const desc=(lerCache()[k(rede)]||{}).desc||[];const s=BP.sugerir(termo,desc);return s?{sugestao:{de:termo,para:s}}:null;}
+  const g=BP.agruparLinhas(lista,termo);return g.ambiguo?{grupos:g.grupos}:null;}
+let desId=0;
+BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(val("bpTermo"));return;}
+  const termo=(val("bpTermo")||st.termo).trim();st.termo=termo;st.desamb=null;st.sugestao=null;st.refina=null;st.escolha="";
+  if(!CP.temIntermediario())return BP.buscar();
+  const memo=BP.memoDes(termo);if(memo){st.refina=memo.t?{t:memo.t,rot:memo.rot}:null;st.escolha=memo.t?"refinada":"exata";return BP.buscar();}
+  const id=++desId;st.desambBusy=true;BP.atualizarDes();let d=null;
+  try{d=await analisar(termo);}catch(e){d=null;}
+  if(id!==desId)return;st.desambBusy=false;
+  if(d&&d.sugestao){st.sugestao=d.sugestao;BP.atualizarDes();BP.foco("bpDesPrim");return;}
+  if(d&&d.grupos){st.desamb={termo,grupos:d.grupos};BP.atualizarDes();BP.foco("bpDesPrim");return;}
+  BP.atualizarDes();return BP.buscar();};
+BP.escolherGrupo=function(i){const g=st.desamb&&st.desamb.grupos[i];if(!g)return;guardarDes(st.desamb.termo,g.termo,g.rot);st.refina={t:g.termo,rot:g.rot};st.escolha="refinada";desId++;return BP.buscar();};
+BP.nenhumaDessas=function(){const t=st.desamb?st.desamb.termo:st.termo;guardarDes(t,"","");st.refina=null;st.escolha="exata";desId++;return BP.buscar();};
+BP.digitarDeNovo=function(){desId++;st.desamb=null;st.sugestao=null;st.desambBusy=false;BP.atualizarDes();BP.foco("bpTermo");};
+BP.aceitarSugestao=function(){const s=st.sugestao;if(!s)return;st.termo=s.para;const e=$("bpTermo");if(e)e.value=s.para;st.sugestao=null;return BP.iniciarBusca();};
+BP.buscarAssimMesmo=function(){st.sugestao=null;st.refina=null;st.escolha="";desId++;return BP.buscar();};
+BP.mudarEscolha=function(){const c=lerDes();delete c[CP.norm(st.termo)];gravarDes(c);return BP.iniciarBusca();};
+// passo 2: quando o botão Buscar pode ser usado (e a frase que explica por quê)
+BP.podeBuscar=function(){const t=(val("bpTermo")||st.termo||"").trim();
+  if(!st.pos&&!st.semDist)return{ok:false,motivo:"Falta o passo 1: diga onde você está ou escolha “buscar sem distância”."};
+  if(!t)return{ok:false,motivo:"Escreva o que você quer comprar para liberar o botão Buscar."};
+  return{ok:true,motivo:st.pos?"Tudo pronto: toque em Buscar.":"Vai buscar sem distância (o custo de ir até o mercado não entra nas contas)."};};
+BP.passoDig=function(v){st.termo=String(v==null?st.termo:v);if(st.desamb||st.sugestao){desId++;st.desamb=null;st.sugestao=null;BP.atualizarDes();}
+  const p=BP.podeBuscar(),b=$("bpBuscar"),m=$("bpPorque");if(b)b.disabled=!p.ok;if(m)m.textContent=p.motivo;};
+BP.foco=function(id){try{setTimeout(()=>{const e=$(id);if(e&&e.focus)e.focus();},60);}catch(e){}};
+BP.semDistancia=function(v){st.semDist=v!==false;if(st.semDist){st.editEnd=false;}BP.render();if(st.semDist)BP.foco("bpTermo");};
+BP.abrirEndereco=function(){st.editEnd=true;BP.render();BP.foco("bpEnd");};
+
+// ---------- busca completa: PROGRESSIVA (cada mercado aparece quando responde; o mapa e os endereços nunca seguram os preços) ----------
+let buscaId=0,ctxBusca=null;
 BP.buscar=async function(){const termo=(($("bpTermo")||{}).value||st.termo).trim();st.qtd=Math.max(1,Math.round(CP.numBR(($("bpQtd")||{}).value)))||st.qtd||1;
-  if(!termo){alert("Digite o produto.");return;}st.termo=termo;st.modo="produto";st.erro="";st.res=null;st.emb="";st.carregando="preços";BP.render();
-  try{if(st.pos&&!st.perto.length&&!falhouHaPouco())await BP.mercadosPerto();
-    const lojas=lojasPorRede(),cfg=cfgDesloc(),sites=sitesAtivos();
-    const todas=Object.keys(sites);const redes=redesNoRaio(todas,lojas,cfg.raioKm);
-    const foraDoRaio=todas.filter(x=>!redes.includes(x));
-    let site=[];const consultas={};
-    if(CP.temIntermediario()){const rs=await emLotes(redes.map(r=>()=>buscarSite(r,termo)),3);rs.forEach((x,i)=>{if(x&&x.erro){consultas[redes[i]]={erro:x.erro};}else if(x){site=site.concat(x);consultas[redes[i]]={ok:true,n:x.length,em:Date.now()};}});}
-    const hist=doHistorico(termo);
-    const ofertas=BP.ranquear(site.concat(hist),st.qtd,lojas,cfg);
-    st.res={termo,todas:ofertas,ofertas,total:ofertas.length,redes,semIntermediario:!CP.temIntermediario(),
-      fontes:BP.situacaoFontes(consultas,hist,{semIntermediario:!CP.temIntermediario(),foraDoRaio,raioKm:cfg.raioKm})};}
-  catch(e){st.erro=BP.erroCurto(e);}
-  st.carregando="";BP.render();};
+  if(!termo){st.erro="Escreva o que você quer comprar.";BP.render();return;}
+  const refina=st.refina&&st.refina.t?st.refina:null,tb=refina?refina.t:termo;
+  st.termo=termo;st.modo="produto";st.erro="";st.emb="";st.desamb=null;st.sugestao=null;st.desambBusy=false;
+  const id=++buscaId,sites=sitesAtivos(),todas=Object.keys(sites),temInt=CP.temIntermediario();
+  let mapaOk=false;
+  const mapaP=st.pos&&!st.perto.length&&!falhouHaPouco()?BP.mercadosPerto().catch(()=>{}).then(()=>{mapaOk=true;if(id===buscaId)recalc();}):null;
+  const redes=redesNoRaio(todas,lojasPorRede(),cfgDesloc().raioKm),porRede={},consultas={};
+  if(temInt)redes.forEach(r=>{consultas[r]={buscando:true};});
+  st.res={termo,tb,escolha:st.escolha||"",refinadoRot:refina?refina.rot:"",todas:[],ofertas:[],total:0,redes,semIntermediario:!temInt,fontes:[],n:temInt?redes.length:0,pend:temInt?redes.length:0,lento:0,mapaPend:!!mapaP};
+  const recalc=()=>{if(id!==buscaId)return;const lojas=lojasPorRede(),cfg=cfgDesloc();
+    const dentro=redesNoRaio(todas,lojas,cfg.raioKm),fora=todas.filter(x=>!dentro.includes(x));
+    let site=[];const cons={};dentro.forEach(r=>{if(porRede[r])site=site.concat(porRede[r]);if(consultas[r])cons[r]=consultas[r];});
+    const hist=doHistorico(tb),of=site.concat(hist);of.forEach(o=>{delete o.selo;});BP.ranquear(of,st.qtd,lojas,cfg);
+    const vs=Object.values(cons);
+    Object.assign(st.res,{todas:of,ofertas:of,total:of.length,redes:dentro,n:vs.length,pend:vs.filter(c=>c.buscando).length,lento:vs.filter(c=>c.lento).length,mapaPend:!!(mapaP&&!mapaOk),
+      fontes:BP.situacaoFontes(cons,hist,{semIntermediario:!temInt,foraDoRaio:fora,raioKm:cfg.raioKm})});
+    BP.atualizarResultados();};
+  const consultar=r=>{consultas[r]={buscando:true};let t;
+    const trab=buscarSite(r,tb).then(x=>{if(id!==buscaId)return;porRede[r]=x;consultas[r]={ok:true,n:x.length,em:Date.now()};recalc();},e=>{if(id!==buscaId)return;consultas[r]={erro:BP.erroCurto(e)};recalc();}).then(()=>clearTimeout(t));
+    const lim=new Promise(ok=>{t=setTimeout(()=>{if(id===buscaId&&consultas[r]&&consultas[r].buscando){consultas[r]={erro:"demorou demais para responder",lento:true};recalc();}ok();},BP.limiteMercadoMs);});
+    return Promise.race([trab,lim]);};
+  ctxBusca={id,consultar,recalc};
+  recalc();BP.render();BP.foco("bpResTit");
+  if(temInt&&redes.length)await emLotes(redes.map(r=>()=>consultar(r)),4);
+  if(mapaP)await mapaP;
+  if(id===buscaId)recalc();};
+BP.tentarRede=function(rede){const c=ctxBusca;if(!c||c.id!==buscaId)return;c.consultar(rede);c.recalc();};
 // lista inteira: em qual mercado a cesta sai mais barata (e se vale dividir entre dois)
 BP.buscarLista=async function(){const l=CP.listasAbertas()[0];if(!l){alert("Nenhuma lista aberta.");return;}
   const its=CP.itensDa(l.id).filter(i=>i.estado==="pendente");if(!its.length){alert("A lista não tem itens pendentes.");return;}
   if(!CP.temIntermediario()){alert("Para comparar a lista nos sites, configure o intermediário em Lista de compras → Ajustes.");return;}
   st.modo="lista";st.erro="";st.cesta=null;st.carregando="a lista ("+its.length+" itens)";BP.render();
-  try{if(st.pos&&!st.perto.length&&!falhouHaPouco())await BP.mercadosPerto();
-    const lojas=lojasPorRede(),cfg=CP.config();const redes=redesNoRaio(Object.keys(sitesAtivos()),lojas,cfg.raioKm);
-    const tarefas=[];its.forEach(i=>redes.forEach(r=>{const t=()=>buscarSite(r,consultaDoItem(i.nome)).then(x=>({i,r,x}));t.rede=r;tarefas.push(t);}));
+  try{const mapaP=st.pos&&!st.perto.length&&!falhouHaPouco()?BP.mercadosPerto().catch(()=>{}):null; // o mapa corre junto com os preços (não antes)
+    const cfg=CP.config();let lojas=lojasPorRede();const redes0=redesNoRaio(Object.keys(sitesAtivos()),lojas,cfg.raioKm);
+    const tarefas=[];its.forEach(i=>redes0.forEach(r=>{const t=()=>buscarSite(r,consultaDoItem(i.nome)).then(x=>({i,r,x}));t.rede=r;tarefas.push(t);}));
     const rs=await emLotes(tarefas,3);
+    if(mapaP)await mapaP;lojas=lojasPorRede();const redes=redesNoRaio(Object.keys(sitesAtivos()),lojas,cfg.raioKm);
     const porRede={};redes.forEach(r=>porRede[r]={rede:r,itens:[],faltam:[],total:0,dist:lojas[r]?lojas[r].dist:null,loja:lojas[r]?lojas[r].nome:""});
-    const falhou=new Set(),consultas={};rs.forEach((z,k)=>{const r=tarefas[k].rede;if(z&&z.erro){falhou.add(r);consultas[r]={erro:z.erro};}else if(!consultas[r]||!consultas[r].erro)consultas[r]={ok:true,n:((consultas[r]||{}).n||0)+((z&&z.x&&z.x.length)||0),em:Date.now()};});
-    rs.forEach(z=>{if(!z||z.erro)return;const{i,r,x}=z;const melhor=[...x].sort((a,b)=>(a.porBase&&b.porBase&&a.base===b.base?a.porBase-b.porBase:a.preco-b.preco))[0];
+    const falhou=new Set(),consultas={};rs.forEach((z,k)=>{const r=tarefas[k].rede;if(!porRede[r])return;if(z&&z.erro){falhou.add(r);consultas[r]={erro:z.erro};}else if(!consultas[r]||!consultas[r].erro)consultas[r]={ok:true,n:((consultas[r]||{}).n||0)+((z&&z.x&&z.x.length)||0),em:Date.now()};});
+    rs.forEach(z=>{if(!z||z.erro)return;const{i,r,x}=z;if(!porRede[r])return;const melhor=[...x].sort((a,b)=>(a.porBase&&b.porBase&&a.base===b.base?a.porBase-b.porBase:a.preco-b.preco))[0];
       if(melhor){porRede[r].itens.push({item:i,o:melhor,v:CP.r2(melhor.preco*(+i.qtd||1))});porRede[r].total+=melhor.preco*(+i.qtd||1);}else porRede[r].faltam.push(i);});
     const lista=Object.values(porRede).filter(p=>p.itens.length).map(p=>Object.assign(p,{total:CP.r2(p.total),desloc:cfg.contarDeslocamento&&p.dist!=null?CP.r2(2*p.dist*CP.custoKmUsado().valor):0,semDesloc:cfg.contarDeslocamento&&p.dist==null?(st.pos?"loja":"pos"):""})).map(p=>Object.assign(p,{custo:CP.r2(p.total+p.desloc)}));
     // ordena: quem acha mais itens primeiro, depois o custo
@@ -6974,7 +7110,7 @@ BP.porMedida=function(o){const e=o&&o.emb;if(e&&o.preco>0){const por=o.preco/e.t
   if(o&&o.porBase&&o.base)return{base:o.base,porBase:o.porBase,por100:o.porBase/10,un:null,rot:"",rotPack:""};return null;};
 // filtros (a ordenação é refeita SEM nova consulta): geral = valor + distância · barato = menor preço de etiqueta · medida = menor preço por litro/kg ·
 // mesma = só a embalagem escolhida, pelo preço de cada unidade · perto = menor distância · hoje = só o que o site mostrou nesta busca
-BP.visao=function(todas,filtro,emb){let l=(todas||[]).slice();
+BP.visao=function(todas,filtro,emb){let l=(todas||[]).slice();if(!st.incluirAntigos)l=l.filter(o=>!BP.antigo(o));
   if(filtro==="hoje")l=l.filter(o=>o.fonte==="site");
   if(filtro==="mesma"){const ch=emb||BP.embDominante(l);l=l.filter(o=>o.emb&&o.emb.chave===ch);l.sort((a,b)=>precoUn(a)-precoUn(b)||(a.dist??99)-(b.dist??99));l.emb=ch;l.base="";return l;}
   const bases={};l.forEach(o=>{if(o.porBase&&o.base)bases[o.base]=(bases[o.base]||0)+1;});
@@ -7048,6 +7184,7 @@ function atualizar(ids){try{if(!CP.ui||CP.ui.aba!=="lista"||!CP.ui.lista)return;
     el.querySelectorAll(".cp-preco-auto").forEach(x=>x.remove());const h=CP.autoPrecoHtml?CP.autoPrecoHtml(it):"";if(h)el.insertAdjacentHTML("beforeend",h);});
   const pv=CP.previaLista(CP.ui.lista),t=$("cpEstTotal");if(t)t.textContent=F(pv.total);
   const r=$("cpEstRef");if(r)r.textContent=pv.ref?" ("+CP.fmtNum(pv.ref,0)+" com preço de hoje da busca)":"";
+  const vl=$("cpEstVelhos");if(vl)vl.textContent=pv.velhos?" ⚠ "+CP.fmtNum(pv.velhos,0)+(pv.velhos===1?" item usa":" itens usam")+" preço de nota com mais de 30 dias":"";
   const m=$("cpAutoBox");if(m&&CP.autoLinha)m.innerHTML=CP.autoLinha();}catch(e){}}
 BP.autoPreco=function(lid){if(!lid)return;try{if(CP.config().buscarAuto===false)return;}catch(e){return;}
   auto.fila.add(lid);if(auto.t)clearTimeout(auto.t);auto.t=setTimeout(()=>{auto.t=0;BP.autoAgora();},1200)||1;};
@@ -7173,9 +7310,9 @@ const lk=(href,txt)=>`<a class="bp-link" href="${esc(href)}" target="_blank" rel
 const mapaUrl=(lat,lon)=>lat!=null&&lon!=null?`https://www.openstreetmap.org/?mlat=${+lat}&mlon=${+lon}#map=17/${+lat}/${+lon}`:"";
 const km=d=>CP.fmtNum(d,1)+" km";
 // "de onde vieram os preços": UMA LINHA POR MERCADO, sempre visível (🟢 consultado agora · 🟡 não respondeu · ⚪ só link/histórico)
-BP.fontesLinhas=function(fontes){if(!Array.isArray(fontes)||!fontes.length)return"";
-  return fontes.map(f=>{const l=BP.linhaFonte(f);return`<div class="cp-linha bp-fonte"><span aria-hidden="true">${l.ic}</span> <b>${esc(f.rede)}</b> — ${esc(l.txt)}${l.link?` · ${lk(l.link,"abrir o site")}`:""}</div>`;}).join("");};
-function fontesHtml(fontes){const h=BP.fontesLinhas(fontes);return h?`<div class="card" id="bpFontes"><h3>Mercados consultados</h3>${h}<p class="note">Preço do site pode ser diferente na loja física.</p></div>`:"";}
+BP.fontesLinhas=function(fontes,retry){if(!Array.isArray(fontes)||!fontes.length)return"";
+  return fontes.map(f=>{const l=BP.linhaFonte(f);return`<div class="cp-linha bp-fonte"><span aria-hidden="true">${l.ic}</span> <b>${esc(f.rede)}</b> — ${esc(l.txt)}${l.link?` · ${lk(l.link,"abrir o site")}`:""}${retry&&f.erroCurto&&f.tipo==="consulta"?` <button class="btn cp-mini" onclick="BP.tentarRede('${A(f.rede)}')">↻ tentar de novo</button>`:""}</div>`;}).join("");};
+function fontesHtml(fontes,retry){const h=BP.fontesLinhas(fontes,retry);return h?`<div class="card" id="bpFontes"><h3>Mercados consultados</h3>${h}<p class="note">Preço do site pode ser diferente na loja física.</p></div>`:"";}
 const EXPLICA={geral:()=>"Ordem por valor e distância (e deslocamento, se marcado).",barato:()=>"Ordenado pelo menor preço da etiqueta (as embalagens podem ter tamanhos diferentes: use “menor preço por medida” ou escolha um tamanho).",
   medida:v=>v.base?"Ordenado pelo preço por "+(v.base==="L"?"litro":"kg")+" (mais justo entre embalagens de tamanhos diferentes).":"Nenhuma oferta tem a medida da embalagem: ordenado pelo menor preço.",
   mesma:()=>"Só o tamanho escolhido acima, pelo preço de cada unidade (fardo e caixa entram pelo preço de uma lata/garrafa).",perto:()=>"Ordenado pela distância da loja mais perto.",hoje:()=>"Só os preços que os sites mostraram agora (sem o seu histórico)."};
@@ -7186,63 +7323,112 @@ const quadroEmb=vis=>{if(!vis.emb)return"";const q=BP.melhorPorMercado(vis);if(!
   const e=q[0].emb,un=o=>o.emb&&o.emb.un>1?" por unidade":"";
   return`<div id="bpQuadroEmb"><p class="note" role="status" style="margin:6px 0"><b>Mais barata (${esc(e.rot)}):</b> <b class="teal">${esc(BP.nomeMercado(q[0]))} ${F(precoUn(q[0]))}</b>${un(q[0])}${q[0].emb.un>1?" ("+esc(q[0].emb.rotPack)+": "+F(q[0].preco)+")":""}.</p>
     <div class="cp-linha" style="margin-bottom:6px"><b>Melhor preço por mercado</b>${q.map((o,k)=>`<div class="flexbet bp-mq"><span>${k===0?"🏆 ":""}${esc(BP.nomeMercado(o))}${o.emb&&o.emb.un>1?` <span class="note" style="margin:0">(${esc(o.emb.rotPack)})</span>`:""}</span><b>${F(precoUn(o))}${un(o)}</b></div>`).join("")}</div></div>`;};
+// ---------- a Busca em PASSOS: 1 Onde você está → 2 O que comprar → 3 Comparar ----------
+const idadePos=()=>{const m=Math.max(0,Math.round((Date.now()-(+st.pos.em||0))/60000));return m<1?"agora há pouco":m<60?"há "+m+" min":"há "+Math.round(m/60)+" h";};
+const osmHtml=()=>{if(!st.pos)return`<p class="note">Sem localização, o mapa não é consultado.</p>`;const cfg=CP.config(),lojas=lojasPorRede();
+  const redes=Object.keys(lojas).length?" · redes: "+Object.entries(lojas).sort((a,b)=>a[1].dist-b[1].dist).map(([r,l])=>esc(r)+" ("+km(l.dist)+")").join(", "):"";
+  if(st.osm.estado==="falhou")return`<p class="note" role="status" id="bpMapaOff" title="${esc(st.osm.erro)}">ℹ️ O mapa não respondeu agora — mostrando seus mercados cadastrados. <button class="btn cp-mini" onclick="BP.mercadosPertoTela()">↻ tentar de novo</button></p>`;
+  if(st.osm.estado==="ok")return`<p class="note">Raio de ${CP.fmtNum(cfg.raioKm||0,0)} km: ${st.perto.length?CP.fmtNum(st.perto.length,0)+" mercado(s) no mapa":"nenhum mercado no mapa (o mapa é colaborativo e pode estar incompleto)"}${redes}. Sua posição (arredondada) é enviada ao OpenStreetMap só para achar mercados e o endereço aproximado; nunca vai para a nuvem da família.</p>`;
+  return`<p class="note">${st.catBusy||st.carregando?"⏳ Consultando o mapa…":`Ainda não consultei o mapa. <button class="btn cp-mini" onclick="BP.mercadosPertoTela()">Buscar mercados perto</button>`}</p>`;};
+BP.atualizarMapa=function(){try{const e=$("bpMapaBox");if(e)e.innerHTML=osmHtml();const l=$("bpLojasBox");if(l&&podeRedesenhar())l.innerHTML=lojasHtml();}catch(x){}};
+BP.atualizarLugar=function(){try{const e=$("bpPos");if(e&&st.pos)e.innerHTML=posHtml();}catch(x){}};
+const posHtml=()=>{const gps=st.pos.fonte!=="endereco";return`<span aria-hidden="true">📍</span> <b>${st.lugar?"perto de "+esc(st.lugar):"localização guardada"}</b> <span class="note" style="margin:0">(atualizada ${idadePos()}${gps?", precisão ~"+CP.fmtNum(st.pos.prec,0)+" m":", endereço digitado, ponto aproximado de ~100 m"}) ✓</span>`;};
+function enderecoHtml(){return`<div class="bp-end" id="bpEndereco"><label class="note" for="bpEnd" style="display:block;margin:8px 0 4px">Digite o endereço (rua, número e cidade):</label>
+    <div class="bp-busca"><input id="bpEnd" value="${esc(st.endTxt)}" oninput="BP.st.endTxt=this.value" placeholder="Rua Exemplo, 123, nome da cidade" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.buscarEndereco()"><button class="btn" onclick="BP.buscarEndereco()">Procurar</button></div>
+    ${st.endMsg?`<p class="note" role="status" id="bpEndMsg" style="margin:6px 0 0">${esc(st.endMsg)}</p>`:""}
+    ${st.cand.length?`<p class="note" style="margin:6px 0 0">Achei isto. Confira antes de usar:</p>`+st.cand.map((c,i)=>`<div class="cp-linha bp-cand"><div class="note" style="margin:0">📍 ${esc(c.rotulo)}</div><button class="btn cp-mini" onclick="BP.usarEndereco(${i})">Usar este ponto</button></div>`).join(""):""}</div>`;}
+function passo1Html(){const pronto=!!st.pos||st.semDist;let corpo;
+  if(st.gpsBusy)corpo=`<p class="note" role="status" style="margin:0">⏳ Procurando a sua localização…</p>`;
+  else if(st.pos){const gps=st.pos.fonte!=="endereco";
+    corpo=`<p id="bpPos" style="margin:0" aria-live="polite">${posHtml()}</p>
+      <div class="row"><button class="btn" onclick="${gps?"BP.localizar()":"BP.voltarGPS()"}">${gps?"↻ atualizar":"↩ voltar ao GPS"}</button><button class="btn" onclick="BP.abrirEndereco()">✏️ outro endereço</button></div>`;}
+  else if(st.semDist)corpo=`<p style="margin:0" role="status">✓ <b>Buscar sem distância.</b> <span class="note" style="margin:0">Os preços saem, mas o custo de ir até o mercado não entra nas contas.</span></p>
+      <div class="row"><button class="btn" onclick="BP.semDistancia(false)">mudar</button></div>`;
+  else corpo=`<p class="note" style="margin:0 0 6px">O app precisa saber onde você está para mostrar o que fica mais perto.</p>
+      <div class="row"><button class="btn primary" onclick="BP.localizar()">📍 Usar minha localização</button><button class="btn" onclick="BP.abrirEndereco()">✏️ Digitar endereço</button><button class="btn" onclick="BP.semDistancia(true)">Buscar sem distância</button></div>`;
+  return`<div class="card bp-passo" id="bpPasso1"><h2 class="bp-h"><span class="bp-n">1 de 3</span>Onde você está?${pronto&&!st.gpsBusy?` <span aria-hidden="true">✓</span>`:""}</h2>${corpo}
+    ${st.editEnd||st.cand.length||st.endMsg?enderecoHtml():""}</div>`;}
+function desambHtml(){
+  if(st.desambBusy)return`<p class="note" role="status" id="bpDesBusy" style="margin:8px 0 0">⏳ Conferindo o que você quis dizer…</p>`;
+  if(st.sugestao){const s=st.sugestao;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Não achei “${esc(s.de)}”.</b> Você quis dizer “${esc(s.para)}”?</p>
+    <button id="bpDesPrim" class="btn primary bp-opcao" onclick="BP.aceitarSugestao()">✔ Sim, buscar “${esc(s.para)}”</button>
+    <button class="btn bp-opcao" onclick="BP.buscarAssimMesmo()">Buscar “${esc(s.de)}” assim mesmo</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
+  if(st.desamb){const d=st.desamb;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>“${esc(d.termo)}” pode ser mais de uma coisa.</b> Qual você quer?</p>
+    ${d.grupos.map((g,i)=>`<button ${i===0?'id="bpDesPrim" ':""}class="btn bp-opcao" onclick="BP.escolherGrupo(${i})"><span aria-hidden="true">${g.ic}</span> <b>${esc(g.rot)}</b> — ${CP.fmtNum(g.n,0)} ${g.n===1?"produto":"produtos"}${g.dept?" ("+esc(g.dept)+")":""}<span class="note" style="display:block;margin:0">ex.: ${esc(g.ex)}</span></button>`).join("")}
+    <button class="btn bp-opcao" onclick="BP.nenhumaDessas()">Nenhuma dessas — buscar exatamente “${esc(d.termo)}”</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
+  return"";}
+BP.atualizarDes=function(){try{const e=$("bpDesBox");if(e)e.innerHTML=desambHtml();const b=$("bpBuscar");if(b){const p=BP.podeBuscar();b.disabled=!p.ok||!!st.desambBusy;}}catch(x){}};
+function passo2Html(){const cfg=CP.config(),ck=CP.custoKmUsado(),p=BP.podeBuscar();
+  return`<div class="card bp-passo" id="bpPasso2"><h2 class="bp-h"><span class="bp-n">2 de 3</span>O que você quer comprar?</h2>
+    <div class="bp-busca"><input id="bpTermo" value="${esc(st.termo)}" oninput="BP.passoDig(this.value)" placeholder="ex.: arroz 5kg" aria-label="produto" aria-describedby="bpPorque" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.iniciarBusca()">
+      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button id="bpBuscar" class="btn primary" ${p.ok&&!st.desambBusy?"":"disabled"} onclick="BP.iniciarBusca()">🔎 Buscar</button></div>
+    <p class="note" id="bpPorque" role="status" aria-live="polite" style="margin:6px 0 0">${esc(p.motivo)}</p>
+    <div id="bpDesBox">${desambHtml()}</div>
+    <p class="note" style="margin:6px 0 0">Busca por texto livre, de um produto só (não usa a sua lista): escreva produto, marca e, se quiser, o tamanho (ex.: “cerveja Heineken 350 ml”, “arroz 5 kg”). Os resultados mostram os tamanhos achados (269 ml, 350 ml, 1 L…): toque num deles para comparar só aquela embalagem entre os mercados.</p>
+    <label class="note" style="margin:6px 0 0;display:flex;align-items:center;gap:6px;min-height:44px"><input type="checkbox" ${cfg.contarDeslocamento?"checked":""} onchange="CP.salvarConfig({contarDeslocamento:this.checked});BP.reordenar()"> contar o deslocamento (${F(ck.valor)}/km${ck.origem==="veiculo"?", do seu veículo":""}, ida e volta)</label>
+    ${cfg.contarDeslocamento&&!st.pos&&!st.semDist?`<p class="note" id="bpSemLoc" role="status" style="margin:6px 0 0;color:#b45309">⚠ ${esc(BP.AVISO_SEM_LOC)}.</p>`:""}</div>`;}
+function statusTxt(){const r=st.res;if(!r)return"";
+  if(r.pend>0)return`⏳ Buscando… ${CP.fmtNum(r.n-r.pend,0)} de ${CP.fmtNum(r.n,0)} mercados responderam. O que já chegou aparece abaixo.${r.lento?" Alguns estão demorando.":""}`;
+  if(r.lento>0)return`🟡 ${CP.fmtNum(r.lento,0)} mercado(s) demorou(aram) mais de ${CP.fmtNum(Math.round(BP.limiteMercadoMs/1000),0)} s: o resultado abaixo é parcial. Se responderem depois, entram sozinhos, ou toque em “tentar de novo” na linha do mercado.`;
+  if(r.mapaPend)return"📍 Pronto. Calculando as distâncias…";
+  return"✔ Pronto.";}
+BP.atualizarResultados=function(){try{const e=$("bpResultados");if(e)e.innerHTML=resultadosHtml();const s=$("bpStatus");if(s)s.textContent=statusTxt();}catch(x){}};
+function resultadosHtml(){const r=st.res;if(!r||st.modo!=="produto")return"";const SA=sitesAtivos();
+  const todas=r.todas||r.ofertas||[],vis=BP.visao(todas,st.filtro,st.emb),esc0=st.incluirAntigos?0:todas.filter(BP.antigo).length;
+  const escolha=r.escolha==="refinada"?`<p class="note" style="margin:0 0 4px">🔎 Busca refinada: <b>${esc(r.refinadoRot)}</b> <button class="btn cp-mini" onclick="BP.mudarEscolha()">mudar</button></p>`:r.escolha==="exata"?`<p class="note" style="margin:0 0 4px">🔎 Busca exata de “${esc(r.termo)}” (escolha lembrada) <button class="btn cp-mini" onclick="BP.mudarEscolha()">mudar</button></p>`:"";
+  return`${escolha}<h3>${r.total?"Melhores ofertas para “"+esc(r.termo)+"”":(r.pend?"Procurando “"+esc(r.termo)+"”…":"Nada encontrado para “"+esc(r.termo)+"”")}</h3>
+      <div class="bp-filtros" role="group" aria-label="Ordenar os resultados">${BP.FILTROS.map(([k,n])=>`<button class="bp-chip ${st.filtro===k?"on":""}" aria-pressed="${st.filtro===k?"true":"false"}" onclick="BP.filtrar('${k}')">${n}</button>`).join("")}</div>
+      ${(()=>{const ch=BP.embalagens(r.todas||[]);if(ch.length<2)return"";const on=st.filtro==="mesma"?(st.emb||BP.embDominante(r.todas||[])):"";
+        return`<p class="note" style="margin:6px 0 2px">Tamanho da embalagem (toque para ver só ele):</p><div class="bp-filtros" role="group" aria-label="Tamanho da embalagem">${ch.map(c=>`<button class="bp-chip ${on===c.chave?"on":""}" aria-pressed="${on===c.chave?"true":"false"}" onclick="BP.escolherEmb('${A(c.chave)}')">${esc(c.rot)} <span class="note" style="margin:0;color:inherit">(${CP.fmtNum(c.n,0)})</span></button>`).join("")}</div>`;})()}
+      <label class="note" style="display:flex;align-items:center;gap:6px;min-height:44px;margin:4px 0 0"><input type="checkbox" id="bpAntigos" ${st.incluirAntigos?"checked":""} onchange="BP.incluirAntigos(this.checked)"> incluir preços antigos (nota com mais de 30 dias, preço de outro dia ou vencido)${esc0?` — ${CP.fmtNum(esc0,0)} escondido(s)`:""}</label>
+      <p class="note" style="margin-top:6px">${esc((EXPLICA[st.filtro]||EXPLICA.geral)(vis))}</p>${quadroEmb(vis)}
+      ${r.semIntermediario?`<p class="note" style="margin-top:0">ℹ️ Só o seu histórico: para os preços de hoje nos sites (${Object.keys(SA).map(esc).join(", ")}), configure o intermediário em Lista de compras → Ajustes.</p>`:""}
+      ${!vis.length&&r.total&&st.filtro==="hoje"?`<p class="note">Nenhum site mostrou preço agora. Veja a situação de cada mercado abaixo ou toque em “melhor no geral” para ver o seu histórico.</p>`:""}
+      ${!vis.length&&r.total&&esc0&&st.filtro!=="hoje"?`<p class="note">Só há preços antigos para este produto. Marque “incluir preços antigos” para vê-los.</p>`:""}
+      ${vis.slice(0,15).map(ofertaHtml).join("")}${vis.length>15?`<p class="note">Mostrando as 15 primeiras de ${CP.fmtNum(vis.length,0)}. Seja mais específico (marca, tamanho) para refinar.</p>`:""}
+      ${fontesHtml(r.fontes,true)}`;}
+BP.incluirAntigos=function(v){st.incluirAntigos=!!v;BP.reordenar();};
+const ofertaHtml=o=>{const f=BP.frescor(o),cor=f.cls==="ambar"?"color:#b45309":f.cls==="cinza"?"color:var(--mut)":"";
+  return`<div class="bp-oferta${f.antigo?" bp-velha":""}">${o.img?`<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="bp-sem-img" aria-hidden="true">${o.fonte==="site"?"🛒":"🧾"}</div>`}
+     <div class="bp-info"><div>${(o.selo||[]).map(s=>`<span class="pill teal">${esc(s)}</span>`).join(" ")}</div><b>${esc(o.nome)}</b>${o.emb?` <span class="pill">${esc(o.emb.rotPack)}</span>`:""}
+       <div class="note bp-fresco" style="margin:0;${cor}"><span aria-hidden="true">${f.ic}</span> ${o.fonte==="site"?"site "+esc(o.rede)+" · ":"sua nota · "+esc(o.loja||"")+" · "}${esc(f.txt)}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja):""}${o.atacado?` · atacado: ${F(o.atacado.preco)} cada a partir de ${CP.fmtNum(o.atacado.min,0)} un.`:""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
+       <div class="note" style="margin:0">${medidaHtml(o)}${o.desloc?(o.porBase?" · ":"")+"com deslocamento: <b>"+F(o.custo)+"</b>":""}${o.semDesloc?`<span style="color:#b45309">${o.desloc||o.porBase?" · ":""}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}</div>
+       <div class="row" style="margin-top:2px">${o.link?lk(o.link,"ver no site"):""}${o.lojaLat!=null?lk(mapaUrl(o.lojaLat,o.lojaLon),"mapa da loja"):""}</div></div>
+     <div class="bp-preco">${o.de?`<s class="note" style="margin:0">${F(o.de)}</s>`:""}<b>${F(o.preco)}</b>${o.de?`<span class="pill rose">-${CP.fmtNum(Math.round((1-o.preco/o.de)*100),0)}%</span>`:""}</div></div>`;};
+function passo3Html(){if(st.modo!=="produto"||!st.res)return"";
+  return`<div class="card bp-passo" id="bpPasso3"><h2 class="bp-h" id="bpResTit" tabindex="-1"><span class="bp-n">3 de 3</span>Compare os resultados</h2>
+    <p class="note" id="bpStatus" role="status" aria-live="polite" style="margin:0 0 6px">${esc(statusTxt())}</p><div id="bpResultados">${resultadosHtml()}</div></div>`;}
 BP.desenhar=function(el){const cfg=CP.config();try{BP.catalogoAgendar();}catch(e){}
-  const lojas=st.pos?lojasPorRede():{},SA=sitesAtivos(),SL=sitesLink();
-  const ofertaHtml=o=>`<div class="bp-oferta">${o.img?`<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="bp-sem-img" aria-hidden="true">${o.fonte==="site"?"🛒":"🧾"}</div>`}
-    <div class="bp-info"><div>${(o.selo||[]).map(s=>`<span class="pill teal">${esc(s)}</span>`).join(" ")}</div><b>${esc(o.nome)}</b>${o.emb?` <span class="pill">${esc(o.emb.rotPack)}</span>`:""}
-      <div class="note" style="margin:0">${o.fonte==="site"?`🌐 site ${esc(o.rede)} · agora`:`🧾 sua nota · ${esc(o.loja||"")} · ${o.data?esc(o.data.split("-").reverse().join("/")):""}`}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja):""}${o.atacado?` · atacado: ${F(o.atacado.preco)} cada a partir de ${CP.fmtNum(o.atacado.min,0)} un.`:""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
-      <div class="note" style="margin:0">${medidaHtml(o)}${o.desloc?(o.porBase?" · ":"")+"com deslocamento: <b>"+F(o.custo)+"</b>":""}${o.semDesloc?`<span style="color:#b45309">${o.desloc||o.porBase?" · ":""}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}</div>
-      <div class="row" style="margin-top:2px">${o.link?lk(o.link,"ver no site"):""}${o.lojaLat!=null?lk(mapaUrl(o.lojaLat,o.lojaLon),"mapa da loja"):""}</div></div>
-    <div class="bp-preco">${o.de?`<s class="note" style="margin:0">${F(o.de)}</s>`:""}<b>${F(o.preco)}</b>${o.de?`<span class="pill rose">-${CP.fmtNum(Math.round((1-o.preco/o.de)*100),0)}%</span>`:""}</div></div>`;
-  // situação do mapa (OpenStreetMap): nunca confunde "falhou" com "zero mercados"
-  const osmHtml=()=>{if(!st.pos)return`<p class="note" role="status" style="color:#b45309">⚠ Sem localização: a distância até os mercados não pode ser calculada (o custo de ir até o mercado fica fora das contas). Use a localização do aparelho ou digite um endereço abaixo. Sua posição (arredondada) é enviada ao OpenStreetMap só para achar mercados e o endereço aproximado; nunca vai para a nuvem da família.</p>`;
-    const redes=Object.keys(lojas).length?" · redes: "+Object.entries(lojas).sort((a,b)=>a[1].dist-b[1].dist).map(([r,l])=>esc(r)+" ("+km(l.dist)+")").join(", "):"";
-    if(st.osm.estado==="falhou")return`<p class="note" role="status" id="bpMapaOff" title="${esc(st.osm.erro)}">ℹ️ O mapa não respondeu agora — mostrando seus mercados cadastrados. <button class="btn cp-mini" onclick="BP.mercadosPertoTela()">↻ tentar de novo</button></p>`;
-    if(st.osm.estado==="ok")return`<p class="note">Raio de ${CP.fmtNum(cfg.raioKm||0,0)} km: ${st.perto.length?CP.fmtNum(st.perto.length,0)+" mercado(s) no mapa":"nenhum mercado no mapa (o mapa é colaborativo e pode estar incompleto)"}${redes}.</p>`;
-    return`<p class="note">Ainda não consultei o mapa. <button class="btn cp-mini" onclick="BP.mercadosPertoTela()">Buscar mercados perto</button></p>`;};
-  const ck=CP.custoKmUsado();
-  const vis=st.res?BP.visao(st.res.todas||st.res.ofertas||[],st.filtro,st.emb):[];
-  const cad=CP.mercadosSite();
+  const SA=sitesAtivos(),SL=sitesLink(),cad=CP.mercadosSite();
   const statusCad=m=>m.consulta?"✔ tem consulta de preço":"🔗 só link (não tem consulta de preço)";
   el.innerHTML=`<div class="cp-topo"><button class="icone-btn" title="Voltar ao início" aria-label="Voltar ao início" onclick="HUB.mostrar()">⌂</button><h1>Busca de produto</h1>
-      <button class="icone-btn" title="Ocultar/mostrar valores" aria-label="Ocultar ou mostrar valores" onclick="try{toggleOlho()}catch(e){};BP.render()">${olhoAberto()?SVG_OLHO_ABERTO:SVG_OLHO_FECHADO}</button></div>
-    <div class="card"><div class="bp-busca"><input id="bpTermo" value="${esc(st.termo)}" oninput="BP.st.termo=this.value" placeholder="o que você procura? (ex.: arroz 5kg)" aria-label="produto" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.buscar()">
-      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button class="btn primary" onclick="BP.buscar()">🔎 Buscar</button></div>
-      <p class="note" style="margin:6px 0 0">Busca por texto livre, de um produto só (não usa a sua lista): escreva produto, marca e, se quiser, o tamanho (ex.: “cerveja Heineken 350 ml”, “arroz 5 kg”). Os resultados mostram os tamanhos achados (269 ml, 350 ml, 1 L…): toque num deles para comparar só aquela embalagem entre os mercados; “menor preço por medida” compara tamanhos diferentes por litro ou kg.</p>
-      <div class="row" style="margin-top:8px"><button class="btn" onclick="BP.buscarLista()">🛒 Onde comprar a minha lista</button>
-        <label class="note" style="margin:0"><input type="checkbox" ${cfg.contarDeslocamento?"checked":""} onchange="CP.salvarConfig({contarDeslocamento:this.checked});BP.reordenar()"> contar o deslocamento (${F(ck.valor)}/km${ck.origem==="veiculo"?", do seu veículo":""}, ida e volta)</label></div>
-      ${cfg.contarDeslocamento&&!st.pos?`<p class="note" id="bpSemLoc" role="status" style="margin:6px 0 0;color:#b45309">⚠ ${esc(BP.AVISO_SEM_LOC)}.</p>`:""}</div>
-    <div class="card"><div class="flexbet"><span>📍 ${st.pos?`<b>Você está ${st.lugar?"perto de "+esc(st.lugar):"localizado"}</b> <span class="note" style="margin:0">(${st.pos.fonte==="endereco"?"endereço digitado, ponto aproximado de ~100 m":"precisão ~"+CP.fmtNum(st.pos.prec,0)+" m"}${st.pos.em?", "+new Date(st.pos.em).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}):""})</span>`:"Localização não informada"}</span>
-      <button class="btn" onclick="${st.pos&&st.pos.fonte==="endereco"?"BP.voltarGPS()":"BP.localizar()"}">${st.pos?(st.pos.fonte==="endereco"?"↩ voltar ao GPS":"↻ atualizar"):"Usar minha localização"}</button></div>
-      ${osmHtml()}
-      <div class="bp-end" id="bpEndereco"><label class="note" for="bpEnd" style="display:block;margin:8px 0 4px">Ou digite um endereço (rua, número e cidade) — por exemplo, se for a outro bairro:</label>
-        <div class="bp-busca"><input id="bpEnd" value="${esc(st.endTxt)}" oninput="BP.st.endTxt=this.value" placeholder="Rua Exemplo, 123, nome da cidade" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.buscarEndereco()"><button class="btn" onclick="BP.buscarEndereco()">Procurar</button></div>
-        ${st.endMsg?`<p class="note" role="status" id="bpEndMsg" style="margin:6px 0 0">${esc(st.endMsg)}</p>`:""}
-        ${st.cand.length?`<p class="note" style="margin:6px 0 0">Achei isto. Confira antes de usar:</p>`+st.cand.map((c,i)=>`<div class="cp-linha bp-cand"><div class="note" style="margin:0">📍 ${esc(c.rotulo)}</div><button class="btn cp-mini" onclick="BP.usarEndereco(${i})">Usar este ponto</button></div>`).join(""):""}</div></div>
-    ${st.carregando?`<div class="card"><p class="note" role="status">⏳ Buscando ${esc(st.carregando)}…</p></div>`:""}
-    ${st.erro?`<div class="card"><p class="note" style="color:#be123c" role="alert">⚠ ${esc(st.erro)}</p></div>`:""}
-    ${st.modo==="produto"&&st.res?`<div class="card"><h3>${st.res.total?"Melhores ofertas para “"+esc(st.res.termo)+"”":"Nada encontrado para “"+esc(st.res.termo)+"”"}</h3>
-      <div class="bp-filtros" role="group" aria-label="Ordenar os resultados">${BP.FILTROS.map(([k,n])=>`<button class="bp-chip ${st.filtro===k?"on":""}" aria-pressed="${st.filtro===k?"true":"false"}" onclick="BP.filtrar('${k}')">${n}</button>`).join("")}</div>
-      ${(()=>{const ch=BP.embalagens(st.res.todas||[]);if(ch.length<2)return"";const on=st.filtro==="mesma"?(st.emb||BP.embDominante(st.res.todas||[])):"";
-        return`<p class="note" style="margin:6px 0 2px">Tamanho da embalagem (toque para ver só ele):</p><div class="bp-filtros" role="group" aria-label="Tamanho da embalagem">${ch.map(c=>`<button class="bp-chip ${on===c.chave?"on":""}" aria-pressed="${on===c.chave?"true":"false"}" onclick="BP.escolherEmb('${A(c.chave)}')">${esc(c.rot)} <span class="note" style="margin:0;color:inherit">(${CP.fmtNum(c.n,0)})</span></button>`).join("")}</div>`;})()}
-      <p class="note" style="margin-top:6px">${esc((EXPLICA[st.filtro]||EXPLICA.geral)(vis))}</p>${quadroEmb(vis)}
-      ${st.res.semIntermediario?`<p class="note" style="margin-top:0">ℹ️ Só o seu histórico: para os preços de hoje nos sites (${Object.keys(SA).map(esc).join(", ")}), configure o intermediário em Lista de compras → Ajustes.</p>`:""}
-      ${!vis.length&&st.res.total&&st.filtro==="hoje"?`<p class="note">Nenhum site mostrou preço agora. Veja a situação de cada mercado abaixo ou toque em “melhor no geral” para ver o seu histórico.</p>`:""}
-      ${vis.slice(0,15).map(ofertaHtml).join("")}${vis.length>15?`<p class="note">Mostrando as 15 primeiras de ${CP.fmtNum(vis.length,0)}. Seja mais específico (marca, tamanho) para refinar.</p>`:""}</div>`:""}
-    ${st.modo==="produto"&&st.res?fontesHtml(st.res.fontes):""}
-    ${st.modo==="lista"&&st.cesta?telaCesta()+fontesHtml(st.cesta.fontes):""}
-    <div class="card"><div class="flexbet"><h3 style="margin:0">🏪 Mercados da família</h3><button class="btn" aria-expanded="${st.addMerc?"true":"false"}" onclick="BP.abrirAdd(${st.addMerc?"false":"true"})">+ mercado</button></div>
-      ${st.addMerc?`<div class="bp-add"><input id="bpMNome" aria-label="Nome do mercado" placeholder="nome (ex.: Tonin)" maxlength="40" autocomplete="off">
-        <input id="bpMSite" aria-label="Endereço do site do mercado" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="site (ex.: https://www.exemplo.com.br)" onkeydown="if(event.key==='Enter')BP.testarMercado()">
-        <div class="row"><button class="btn primary" onclick="BP.testarMercado()">Testar e salvar</button><button class="btn" onclick="BP.abrirAdd(false)">Cancelar</button></div>
-        <p class="note" style="margin:0">O app testa se o site tem consulta de preço. Se tiver, passa a entrar nas buscas e na lista; se não, fica como atalho.</p></div>`:""}
-      ${st.addMsg?`<p class="note" role="status" id="bpMsg">${esc(st.addMsg.ic)} ${esc(st.addMsg.txt)}</p>`:""}
-      ${cad.map(m=>`<div class="cp-linha"><b>${esc(m.nome)}</b> <span class="note" style="margin:0">${esc(m.site.replace("https://",""))}</span><div class="note" style="margin:0">${statusCad(m)}</div>
-        <div class="row">${lk(m.site,"abrir o site")}<button class="btn cp-mini" onclick="BP.testarMercado('${A(m.id)}')">↻ testar de novo</button><button class="btn cp-mini danger" aria-label="remover ${esc(m.nome)}" onclick="BP.removerMercado('${A(m.id)}')">🗑 remover</button></div></div>`).join("")||(st.addMerc?"":`<p class="note">Nenhum mercado adicionado ainda.</p>`)}</div>
-    <div class="card"><h3>📰 Ofertas e folhetos</h3><p class="note" style="margin-top:0">Folhetos são imagens: o app não lê (ainda). Abra direto no site:</p>
-      <div class="row">${Object.entries(Object.assign({},SA,SITES_SEM_API,SL)).map(([n,u])=>`<a class="btn" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(n)}</a>`).join("")}</div></div>
-    ${catalogoCard()}
-    ${lojasHtml()}`;};
+       <button class="icone-btn" title="Ocultar/mostrar valores" aria-label="Ocultar ou mostrar valores" onclick="try{toggleOlho()}catch(e){};BP.render()">${olhoAberto()?SVG_OLHO_ABERTO:SVG_OLHO_FECHADO}</button></div>
+     ${passo1Html()}${passo2Html()}
+     ${st.carregando?`<div class="card"><p class="note" role="status">⏳ Buscando ${esc(st.carregando)}…</p></div>`:""}
+     ${st.erro?`<div class="card"><p class="note" style="color:#be123c" role="alert">⚠ ${esc(st.erro)}</p></div>`:""}
+     ${passo3Html()}
+     <div class="card"><p class="note" style="margin:0 0 6px">Outra pergunta: em qual mercado a lista inteira sai mais barata?</p><button class="btn" onclick="BP.buscarLista()">🛒 Onde comprar a minha lista</button></div>
+     ${st.modo==="lista"&&st.cesta?telaCesta()+fontesHtml(st.cesta.fontes):""}
+     <details class="bp-mais" id="bpMais" ${st.mais?"open":""} ontoggle="BP.st.mais=this.open"><summary>Mais opções (mercados, catálogo da cidade, folhetos)</summary>
+     <div class="card"><div id="bpMapaBox">${osmHtml()}</div></div>
+     <div class="card"><div class="flexbet"><h3 style="margin:0">🏪 Mercados da família</h3><button class="btn" aria-expanded="${st.addMerc?"true":"false"}" onclick="BP.abrirAdd(${st.addMerc?"false":"true"})">+ mercado</button></div>
+       ${st.addMerc?`<div class="bp-add"><input id="bpMNome" aria-label="Nome do mercado" placeholder="nome (ex.: Tonin)" maxlength="40" autocomplete="off">
+         <input id="bpMSite" aria-label="Endereço do site do mercado" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="site (ex.: https://www.exemplo.com.br)" onkeydown="if(event.key==='Enter')BP.testarMercado()">
+         <div class="row"><button class="btn primary" onclick="BP.testarMercado()">Testar e salvar</button><button class="btn" onclick="BP.abrirAdd(false)">Cancelar</button></div>
+         <p class="note" style="margin:0">O app testa se o site tem consulta de preço. Se tiver, passa a entrar nas buscas e na lista; se não, fica como atalho.</p></div>`:""}
+       ${st.addMsg?`<p class="note" role="status" id="bpMsg">${esc(st.addMsg.ic)} ${esc(st.addMsg.txt)}</p>`:""}
+       ${cad.map(m=>`<div class="cp-linha"><b>${esc(m.nome)}</b> <span class="note" style="margin:0">${esc(m.site.replace("https://",""))}</span><div class="note" style="margin:0">${statusCad(m)}</div>
+         <div class="row">${lk(m.site,"abrir o site")}<button class="btn cp-mini" onclick="BP.testarMercado('${A(m.id)}')">↻ testar de novo</button><button class="btn cp-mini danger" aria-label="remover ${esc(m.nome)}" onclick="BP.removerMercado('${A(m.id)}')">🗑 remover</button></div></div>`).join("")||(st.addMerc?"":`<p class="note">Nenhum mercado adicionado ainda.</p>`)}</div>
+     <div class="card"><h3>📰 Ofertas e folhetos</h3><p class="note" style="margin-top:0">Folhetos são imagens: o app não lê (ainda). Abra direto no site:</p>
+       <div class="row">${Object.entries(Object.assign({},SA,SITES_SEM_API,SL)).map(([n,u])=>`<a class="btn" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(n)}</a>`).join("")}</div></div>
+     ${catalogoCard()}
+     <div id="bpLojasBox">${lojasHtml()}</div></details>`;};
+// abrir a Busca: o que estiver guardado aparece NA HORA; o mapa e o endereço são aquecidos em segundo plano (nunca os preços)
+BP.abrir=function(){try{const p=st.pos;if(p&&Date.now()-(+p.em||0)>=(p.fonte==="endereco"?24:6)*3600000){st.pos=null;st.lugar="";}}catch(e){}
+  try{if(st.pos&&!st.perto.length&&!falhouHaPouco())BP.mercadosPerto().then(()=>{BP.atualizarMapa();BP.refazerDistancias();},()=>{});}catch(e){}
+  try{if(st.pos&&st.pos.fonte!=="endereco"&&!st.lugar&&!st.lugarTentado){st.lugarTentado=true;lugarAproximado().then(()=>BP.atualizarLugar());}}catch(e){}
+  BP.render();};
+BP.refazerDistancias=function(){BP.atualizarMapa();if(st.modo==="produto"&&st.res&&ctxBusca&&ctxBusca.id===buscaId)ctxBusca.recalc();};
 // ---------- tela: importar a lista de mercados da cidade (dado do usuário) ----------
 const prevCat=r=>{const n=r.lojas.length;return n?CP.fmtNum(n,0)+(n===1?" loja reconhecida":" lojas reconhecidas")+(r.ignoradas.length?" · "+CP.fmtNum(r.ignoradas.length,0)+" linha(s) ignorada(s) (linha "+r.ignoradas.slice(0,5).map(x=>x.linha).join(", ")+")":""):(String(st.impTxt||"").trim()?"Nenhuma loja reconhecida: use Nome | Endereço em cada linha.":"Cole as lojas acima para ver a prévia.");};
 BP.impDig=function(v){st.impTxt=String(v||"");const e=$("bpImpPrevia");if(e)e.textContent=prevCat(CP.lerCatalogo(st.impTxt));};
@@ -7278,7 +7464,8 @@ function telaCesta(){const c=st.cesta;const melhor=c.lista[0];
     ${c.dupla&&melhor?`<p class="note">Dividindo entre <b>${c.dupla.redes.map(esc).join(" e ")}</b> (cada item no mais barato dos dois): ${F(c.dupla.custo)} com deslocamento — ${c.dupla.custo<melhor.custo?`<b class="teal">economiza ${F(melhor.custo-c.dupla.custo)}</b>`:`<b>não compensa</b> (fica ${F(c.dupla.custo-melhor.custo)} mais caro)`}.</p>`:""}
     ${c.lista.map(p=>`<details style="margin-top:6px"><summary class="note">${esc(p.rede)}: ver itens</summary><table>${p.itens.map(x=>`<tr><td>${esc(x.item.nome)}<div class="note" style="margin:0">${esc(x.o.nome)}</div></td><td class="n">${F(x.v)}</td></tr>`).join("")}${p.faltam.map(i=>`<tr><td>${esc(i.nome)}</td><td class="n note">não achei</td></tr>`).join("")}</table></details>`).join("")}
     <p class="note">Preço do site pode variar na loja; confira as ofertas da semana.</p></div>`;}
-BP.reordenar=function(){if(st.modo==="produto"&&st.res){const t=st.res.todas||st.res.ofertas||[];t.forEach(o=>{delete o.selo;});BP.ranquear(t,st.qtd,st.pos?lojasPorRede():{},cfgDesloc());}
+BP.reordenar=function(){if(st.modo==="produto"&&st.res&&ctxBusca&&ctxBusca.id===buscaId){ctxBusca.recalc();return BP.render();}
+  if(st.modo==="produto"&&st.res){const t=st.res.todas||st.res.ofertas||[];t.forEach(o=>{delete o.selo;});BP.ranquear(t,st.qtd,st.pos?lojasPorRede():{},cfgDesloc());}
   if(st.modo==="lista"&&st.cesta)return BP.buscarLista();BP.render();};
 })(BP);}catch(e){window.__erroModulo=(window.__erroModulo||[]).concat("49: "+e.message);}
 
