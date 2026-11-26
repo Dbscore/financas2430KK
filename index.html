@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-9";
+const APP_VERSAO_TXT="2026.11.26-10";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -7104,14 +7104,15 @@ BP.sugerir=function(termo,descartados){const voc=new Set();
   return mudou?novo.join(" "):"";};
 const latRede={};
 BP.limiteMercadoMs=10000;BP.hedgeMs=3500;
-// 1 pedido (o que já está no cache, senão o mercado que respondeu mais rápido) → {grupos}|{sugestao}|null
-async function analisar(termo){const sites=sitesAtivos(),vt=Object.keys(sites).filter(r=>r!=="Tenda"),pool=vt.length?vt:Object.keys(sites);if(!pool.length)return null;
-  const cache=lerCache(),k=r=>r+"|"+CP.norm(termo),fresco=r=>cache[k(r)]&&Date.now()-cache[k(r)].em<30*60000;
-  const rede=pool.find(fresco)||pool.slice().sort((a,b)=>(latRede[a]??5e3)-(latRede[b]??5e3))[0];
-  const t0=Date.now();let lista,tm;
-  try{lista=await Promise.race([buscarSite(rede,termo),new Promise((_,no)=>{tm=setTimeout(()=>{const x=new Error("demorou");x.tempo=true;no(x);},BP.limiteMercadoMs);})]);}finally{clearTimeout(tm);}
-  latRede[rede]=Date.now()-t0;
-  if(!lista.length){const desc=(lerCache()[k(rede)]||{}).desc||[];const s=BP.sugerir(termo,desc);return s?{sugestao:{de:termo,para:s}}:null;}
+// consulta leve em TODOS os mercados com consulta (em paralelo, 7 s no máximo cada; o que já está no cache de 30 min não gasta pedido) e juntas as respostas:
+// a ambiguidade só aparece olhando todos (ex.: "flowers": o Atacadão só tinha limpeza e o Tenda tinha as bebidas). A busca completa reaproveita o mesmo cache.
+BP.limiteLeveMs=7000;
+async function analisar(termo){const sites=sitesAtivos(),pool=Object.keys(sites);if(!pool.length)return null;
+  const cache=lerCache(),k=r=>r+"|"+CP.norm(termo);
+  const um=async r=>{const t0=Date.now();let tm;try{const l=await Promise.race([buscarSite(r,termo),new Promise((_,no)=>{tm=setTimeout(()=>{const x=new Error("demorou");x.tempo=true;no(x);},BP.limiteLeveMs);})]);latRede[r]=Date.now()-t0;return l||[];}catch(e){return null;}finally{clearTimeout(tm);}};
+  const resp=await Promise.all(pool.map(um));
+  const lista=[].concat(...resp.filter(Array.isArray));
+  if(!lista.length){const desc=[].concat(...pool.map(r=>(lerCache()[k(r)]||{}).desc||[]));const s=resp.some(Array.isArray)?BP.sugerir(termo,desc):"";return s?{sugestao:{de:termo,para:s}}:null;}
   const g=BP.agruparLinhas(lista,termo);return g.ambiguo?{grupos:g.grupos,categorias:g.categorias||[]}:null;}
 let desId=0;
 BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(val("bpTermo"));return;}
