@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-7";
+const APP_VERSAO_TXT="2026.11.26-8";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -6194,6 +6194,7 @@ function blocoPrecos(l,pendN,origem){if(typeof BP==="undefined"||!BP.compararMer
     <p class="note" style="margin-top:0">Consultado ${min?"há "+CP.fmtNum(min,0)+" min":"agora"}. Preço do site pode ser diferente na loja; nada disto é gravado como compra.</p>
     ${resumoConta?`<p style="margin:6px 0" id="cpResumoConta"><b>De ${CP.fmtNum(n,0)} ${n===1?"item":"itens"}, ${resumoConta} ${Object.keys(R.conta).length===1&&Object.values(R.conta)[0]===1?"fica mais barato":"ficam mais baratos"}.</b></p>`:`<p style="margin:6px 0">Nenhum site mostrou preço para os itens da lista agora.</p>`}
     ${R.opcoes.map(o=>`<div class="cp-linha cp-opcao ${o.chave===R.melhorOpcao?"melhor":""}"><div class="flexbet"><b>${rot(o)}</b>${o.chave===R.melhorOpcao?'<span class="pill teal">🏆 melhor</span>':""}</div>
+      ${(()=>{const L=o.tipo==="misto"?(o.lojas||[]):(o.loja?[Object.assign({rede:o.rede},o.loja)]:[]);return L.length?`<div class="note cp-lojausada" style="margin:0">📍 ${L.map(l=>esc(l.nome)+(l.end?" ("+esc(l.end)+")":"")+" · "+CP.fmtNum(l.dist,1)+" km"+(l.n>1?" (a mais perto de "+CP.fmtNum(l.n,0)+")":"")).join("; ")}</div>`:"";})()}
       <div class="note" style="margin:0">${F(o.total)} em ${CP.fmtNum(o.achou,0)}/${CP.fmtNum(n,0)} itens${o.desloc?` + ${F(o.desloc)} de deslocamento${o.tipo==="misto"?" (as duas viagens)":""} = <b>${F(o.custo)} com deslocamento</b>`:""}${o.semDesloc?`<span style="color:#b45309">${o.desloc?" · ":" — "}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}${o.aprox?` · ${CP.fmtNum(o.aprox,0)} aprox.`:""}${o.faltam?` · ${CP.fmtNum(o.faltam,0)} sem preço lá (não entram na soma)`:""}</div>
       <div class="row" style="margin-top:4px">${R.escolhida===o.chave?'<span class="pill teal">✓ escolhida</span>':`<button class="btn cp-mini" onclick="BP.escolherOpcao('${A(o.chave)}')">Usar esta opção</button>`}</div></div>`).join("")}
     ${R.escolhida?(prox?`<p class="note" role="status" id="cpEscolhida">✔ Opção escolhida. Ao tocar em “Criar esta lista”, cada item já nasce com o mercado e o preço de hoje.</p>`:`<p class="note" role="status" id="cpEscolhida">✔ Lista atualizada: cada item tem o mercado escolhido e o preço de hoje; a estimativa já usa esses preços. Para trocar o mercado de um item, toque no nome dele.</p>`):`<p class="note">Escolha uma opção para ${prox?"já criar a lista com mercado e preço":"atualizar a lista"} (ou ignore e siga como está).</p>`}
@@ -6702,7 +6703,9 @@ BP.localizar=async function(){st.gpsBusy=true;st.erro="";st.semDist=false;BP.ren
   await posFundo(true);};
 // mapa (mercados perto) e endereço aproximado em SEGUNDO PLANO: a posição já está na tela e a busca de preços não espera por eles
 async function posFundo(forcar){const eu=st.pos;
-  await Promise.all([BP.mercadosPerto(forcar).then(()=>{if(st.pos===eu)BP.refazerDistancias();},()=>{}),(eu.fonte==="gps"?lugarAproximado().then(()=>{if(st.pos===eu)BP.atualizarLugar();}):Promise.resolve())]);
+  const todos=Promise.all([BP.mercadosPerto(forcar).then(()=>{if(st.pos===eu)BP.refazerDistancias();},()=>{}),(eu.fonte==="gps"?lugarAproximado().then(()=>{if(st.pos===eu)BP.atualizarLugar();}):Promise.resolve())]);
+  try{BP.descobrirLojas();}catch(e){} // depois do endereço aproximado na fila do Nominatim (a descoberta não atrasa nada)
+  await todos;
   try{BP.catalogoAgendar(300);}catch(e){}}
 // ---------- Nominatim (OpenStreetMap): no máximo 1 pedido por segundo, um de cada vez ----------
 // (a política de uso do serviço pede isso; o navegador não deixa trocar o User-Agent, então a identificação é a do próprio app)
@@ -6821,15 +6824,110 @@ BP.mercadosPerto=async function(forcar){if(!st.pos)return[];const raio=CP.config
 BP.mercadosPertoTela=async function(){st.carregando="mercados no mapa";BP.render();await BP.mercadosPerto(true);st.carregando="";BP.render();};
 const falhouHaPouco=()=>st.osm.estado==="falhou"&&Date.now()-st.osm.em<120000;
 // quais mercados consultar: com a posição, só os que têm loja no raio; um mercado que a família cadastrou (ou qualquer um, se o mapa falhou)
-// não tem loja conhecida: é consultado mesmo assim (sem distância) — senão nunca apareceria
+// não tem loja conhecida: é consultado mesmo assim (sem distância) — senão nunca apareceria; o mesmo vale enquanto a descoberta das lojas da rede ainda roda
 function redesNoRaio(todas,lojas,raio){if(!st.pos)return todas;const cad=new Set();try{CP.mercadosSite().forEach(m=>cad.add(m.nome));}catch(e){}
-  const r=todas.filter(x=>lojas[x]?lojas[x].dist<=raio:(st.osm.estado!=="ok"||cad.has(x)));return r.length?r:todas;}
-// a loja mais perto de cada rede (OpenStreetMap + lista de mercados da cidade + mercados que vocês marcaram com "estou aqui")
-function lojasPorRede(){const o={};
-  st.perto.forEach(m=>{if(m.rede&&(!o[m.rede]||m.dist<o[m.rede].dist))o[m.rede]={nome:m.nome,dist:m.dist,lat:m.lat,lon:m.lon,end:m.end};});
-  try{BP.lojasCatalogo().forEach(c=>{if(c.rede&&c.dist!=null&&(!o[c.rede]||c.dist<o[c.rede].dist))o[c.rede]={nome:c.nome,dist:c.dist,lat:c.lat,lon:c.lon,end:c.end};});}catch(e){}
-  CP.vivos("mercados").forEach(m=>{const d=BP.km(st.pos,m);if(m.rede&&d!=null&&(!o[m.rede]||d<o[m.rede].dist))o[m.rede]={nome:m.apelido||m.nome,dist:d,lat:m.lat,lon:m.lon,end:m.endereco||""};});
-  return o;}
+  // rede com loja conhecida FORA do raio sai; rede SEM loja conhecida (o mapa/descoberta não achou) continua, sem distância e com o aviso: o preço do site vale mesmo assim
+  const r=todas.filter(x=>lojas[x]?lojas[x].dist<=raio:true);return r.length?r:todas;}
+// as lojas de cada rede, de TODAS as fontes (mapa Overpass + descoberta por nome de rede + lista de mercados da cidade + mercados "estou aqui"),
+// sem repetir (mesma rede a menos de 150 m) e a mais perto primeiro. A "mais perto de cada rede" é a primeira.
+function lojasTodas(){const o={};
+  const add=l=>{if(!l.rede||l.dist==null)return;const a=o[l.rede]=o[l.rede]||[];
+    const rep=a.find(x=>x.lat!=null&&l.lat!=null&&BP.km(x,l)<=0.15);if(rep){if(l.dist<rep.dist)Object.assign(rep,l);return;}a.push(l);};
+  st.perto.forEach(m=>add({rede:m.rede,nome:m.nome,dist:m.dist,lat:m.lat,lon:m.lon,end:m.end,fonte:"mapa"}));
+  try{BP.lojasCatalogo().forEach(c=>add({rede:c.rede,nome:c.nome,dist:c.dist,lat:c.lat,lon:c.lon,end:c.end,fonte:"catalogo"}));}catch(e){}
+  try{CP.vivos("mercados").forEach(m=>{const d=BP.km(st.pos,m);add({rede:m.rede,nome:m.apelido||m.nome,dist:d,lat:m.lat,lon:m.lon,end:m.endereco||"",fonte:"mercado"});});}catch(e){}
+  try{lojasDescobertas().forEach(l=>add(Object.assign({fonte:"descoberta"},l)));}catch(e){}
+  Object.values(o).forEach(a=>a.sort((x,y)=>x.dist-y.dist));return o;}
+BP.lojasDaRede=rede=>lojasTodas()[rede]||[];
+function lojasPorRede(){const o={},t=lojasTodas();Object.keys(t).forEach(r=>{const l=t[r][0];o[r]={nome:l.nome,dist:l.dist,lat:l.lat,lon:l.lon,end:l.end,n:t[r].length};});return o;}
+
+// ---------- descoberta automática das lojas de cada rede (Nominatim por NOME DA REDE, numa caixa em volta de você) ----------
+// Nada de endereço no app: com a posição, o app pergunta ao OpenStreetMap "onde ficam as lojas do <rede> aqui perto?" (1 pedido por segundo,
+// em segundo plano, sem atrasar os preços). O que achar fica 30 dias neste aparelho (chave: posição ~5 km + rede). Falha de rede NUNCA
+// vira "não achei": nada é guardado e o app tenta de novo em 60 s. O mapa pode não ter todas as lojas: o usuário pode informar as que faltam.
+const CH_LOJAS=KEY+"__busca_lojas",TTL_LOJAS=30*86400000,TTL_LOJAS_VAZIO=86400000;
+BP.descRetryMs=60000;st.desc={};st.descBusy=false;st.descTimer=0;st.inf=null;
+let lojasMem=null;
+function lerLojas(){if(lojasMem)return lojasMem;let c={};try{c=JSON.parse(localStorage.getItem(CH_LOJAS)||"{}");}catch(e){}
+  lojasMem=c&&typeof c==="object"&&!Array.isArray(c)?c:{};return lojasMem;}
+function gravarLojas(){const c=lerLojas(),ks=Object.keys(c);if(ks.length>40)ks.sort((a,b)=>(c[a].em||0)-(c[b].em||0)).slice(0,ks.length-40).forEach(k=>delete c[k]);try{localStorage.setItem(CH_LOJAS,JSON.stringify(c));}catch(e){}}
+const q5km=v=>(Math.round(v*20)/20).toFixed(2); // 0,05 grau ≈ 5 km
+BP.chaveLojas=(rede,pos)=>q5km(pos.lat)+","+q5km(pos.lon)+"|"+CP.norm(rede);
+const lojaOk=l=>l&&typeof l==="object"&&Number.isFinite(+l.lat)&&Number.isFinite(+l.lon)&&Math.abs(+l.lat)<=90&&Math.abs(+l.lon)<=180;
+function entradaLojas(rede,pos){if(!pos)return null;const e=lerLojas()[BP.chaveLojas(rede,pos)];if(!e||typeof e!=="object"||!Array.isArray(e.lojas))return null;
+  const idade=Date.now()-(+e.em||0);if(idade>=(e.lojas.length?TTL_LOJAS:TTL_LOJAS_VAZIO))return null;
+  return e.lojas.filter(lojaOk).map(l=>({rede:String(l.rede||rede).slice(0,40),nome:String(l.nome||rede).slice(0,80),lat:+l.lat,lon:+l.lon,end:String(l.end||"").slice(0,120)}));}
+// todas as redes consultáveis, na posição atual, já com a distância até você
+function lojasDescobertas(){const o=[];if(!st.pos)return o;Object.keys(sitesAtivos()).forEach(r=>{(entradaLojas(r,st.pos)||[]).forEach(l=>o.push(Object.assign({},l,{rede:r,dist:BP.km(st.pos,l)})));});return o;}
+// resposta do Nominatim -> lojas da rede (só resultados cujo nome tem a rede e que são LOJAS, sem repetir a menos de 150 m)
+BP.filtrarLojasRede=function(json,rede){const n=CP.norm(rede),out=[];if(!n||!Array.isArray(json))return out;
+  json.forEach(x=>{try{const cls=String(x.category||x.class||""),tp=String(x.type||"");if(cls!=="shop"||!/^(supermarket|wholesale|convenience|grocery|greengrocer|department_store|general|variety_store)$/.test(tp))return; // só loja de verdade (nome curto como "Tenda" não pode pegar "Tenda de festas")
+    const lat=+x.lat,lon=+x.lon;if(!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)return;
+    const dn=String(x.display_name||""),nome=String(x.name||dn.split(",")[0]||"").trim();if(!nome||!CP.norm(nome).includes(n))return;
+    const p={lat:Math.round(lat*1e5)/1e5,lon:Math.round(lon*1e5)/1e5};if(out.some(y=>BP.km(y,p)<=0.15))return;
+    const resto=dn.split(",").slice(1,4).join(",").replace(/\s+/g," ").trim();
+    out.push({rede,nome:nome.slice(0,80),lat:p.lat,lon:p.lon,end:resto.slice(0,120)});}catch(e){}});
+  return out;};
+BP.urlDescoberta=(rede,pos)=>"https://nominatim.openstreetmap.org/search?q="+encodeURIComponent(rede)+"&format=jsonv2&limit=10&bounded=1&viewbox="+[pos.lon-0.25,pos.lat+0.25,pos.lon+0.25,pos.lat-0.25].map(v=>Math.round(v*1e4)/1e4).join(",");
+BP.descobrirLojas=async function(){if(!st.pos||st.descBusy)return;const eu=st.pos;st.descBusy=true;let falhou=false;
+  if(st.descTimer){clearTimeout(st.descTimer);st.descTimer=0;}
+  try{for(const rede of Object.keys(sitesAtivos())){if(st.pos!==eu)break;
+    const ja=entradaLojas(rede,eu);if(ja){st.desc[rede]={estado:"ok",n:ja.length};continue;}
+    st.desc[rede]={estado:"buscando"};BP.atualizarAviso();
+    try{const j=await nominatim(BP.urlDescoberta(rede,eu));if(!Array.isArray(j))throw new Error("o mapa respondeu algo inesperado");
+      const lojas=BP.filtrarLojasRede(j,rede);lerLojas()[BP.chaveLojas(rede,eu)]={em:Date.now(),lojas};gravarLojas();
+      st.desc[rede]={estado:"ok",n:lojas.length};if(st.pos===eu)BP.refazerDistancias();}
+    catch(e){falhou=true;st.desc[rede]={estado:"falhou",erro:BP.erroCurto(e)};}
+    BP.atualizarAviso();}}
+  finally{st.descBusy=false;}
+  if(st.pos!==eu)return BP.descobrirLojas();
+  if(falhou){const t=setTimeout(()=>{st.descTimer=0;BP.descobrirLojas();},BP.descRetryMs);if(t&&t.unref)t.unref();st.descTimer=t||1;}
+  BP.atualizarAviso();};
+BP.limparLojasDescobertas=function(){lojasMem={};try{localStorage.removeItem(CH_LOJAS);}catch(e){}st.desc={};};
+// quais redes aparecem nos resultados desta busca (para o aviso único)
+function redesDaTela(){const r=st.res,s=new Set(r&&r.redes||[]);((r&&(r.todas||r.ofertas))||[]).forEach(o=>{if(o.fonte==="site"&&o.rede)s.add(o.rede);});return[...s];}
+function listaRedes(a){a=a.map(esc);return a.length<2?a.join(""):a.slice(0,-1).join(", ")+" e "+a[a.length-1];}
+// UM aviso no topo dos resultados (em vez de repetir em cada produto): procurando / não sei onde ficam / a loja mais perto de cada rede
+function avisoLojasHtml(){if(!st.pos||st.modo!=="produto"||!st.res||!CP.config().contarDeslocamento)return"";
+  const redes=redesDaTela();if(!redes.length)return"";const T=lojasTodas();
+  const sem=redes.filter(r=>!(T[r]&&T[r].length)),com=redes.filter(r=>T[r]&&T[r].length);
+  const procurando=sem.filter(r=>{const d=st.desc[r];return!d||d.estado!=="ok";}),semMesmo=sem.filter(r=>!procurando.includes(r));
+  const falhou=procurando.some(r=>st.desc[r]&&st.desc[r].estado==="falhou");
+  let h="";
+  if(procurando.length)h+=`<p class="note" role="status" id="bpLojasProc" style="margin:4px 0"><span aria-hidden="true">⏳</span> Procurando as lojas ${procurando.length>1?"das redes":"da rede"} ${listaRedes(procurando)}… O custo de ir ainda não está somado.${falhou?" O mapa não respondeu agora; tento de novo em instantes.":""}</p>`;
+  if(semMesmo.length)h+=`<p class="note" role="status" id="bpSemLoja" style="margin:4px 0;color:#b45309">Ainda não sei onde ficam as lojas ${semMesmo.length>1?"das redes":"da rede"} ${listaRedes(semMesmo)} — o custo de ir não está somado. O mapa público pode não ter todas as lojas; se você souber o endereço de uma, é só informar.</p>`;
+  com.forEach(r=>{const a=T[r],l=a[0];
+    h+=`<div class="note bp-lojaperto" style="margin:4px 0"><span aria-hidden="true">📍</span> <b>${esc(r)} mais perto: ${km(l.dist)}</b> — ${esc(l.nome)}${l.end?", "+esc(l.end):""}${a.length>1?`<details style="margin:2px 0 0"><summary style="min-height:44px;display:flex;align-items:center">ver outras (${CP.fmtNum(a.length-1,0)})</summary>${a.slice(1,9).map(x=>`<div class="note" style="margin:0">${esc(x.nome)}${x.end?", "+esc(x.end):""} · ${km(x.dist)}</div>`).join("")}</details>`:""}</div>`;});
+  if(st.inf)h+=infHtml(redes);
+  else h+=`<div class="row" style="margin:4px 0"><button class="btn cp-mini" id="bpInfAbrir" onclick="BP.infAbrir('${A(semMesmo[0]||procurando[0]||com[0]||redes[0])}')">Informar uma loja</button></div>`;
+  return h;}
+function infHtml(redes){const i=st.inf;
+  return`<div class="bp-end" id="bpInf" role="group" aria-label="Informar uma loja"><p class="note" style="margin:0 0 4px"><b>Informar uma loja</b> — ela fica na sua Lista e vai para o outro aparelho.</p>
+    <label class="note" for="bpInfRede" style="display:block;margin:4px 0 2px">Qual rede?</label>
+    <select id="bpInfRede" onchange="BP.st.inf.rede=this.value" style="min-height:44px">${redes.map(r=>`<option value="${esc(r)}"${r===i.rede?" selected":""}>${esc(r)}</option>`).join("")}</select>
+    <label class="note" for="bpInfEnd" style="display:block;margin:6px 0 2px">Endereço da loja (rua, número e cidade):</label>
+    <div class="bp-busca"><input id="bpInfEnd" value="${esc(i.txt||"")}" oninput="BP.st.inf.txt=this.value" placeholder="Rua Exemplo, 123, nome da cidade" autocomplete="off" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.infBuscar()"><button class="btn" onclick="BP.infBuscar()">Procurar</button></div>
+    ${i.busy?`<p class="note" role="status">⏳ Procurando o endereço…</p>`:""}${i.msg?`<p class="note" role="status" id="bpInfMsg" style="margin:6px 0 0">${esc(i.msg)}</p>`:""}
+    ${(i.cand||[]).length?`<p class="note" style="margin:6px 0 0">Achei isto. Confira antes de salvar:</p>`+i.cand.map((c,k)=>`<div class="cp-linha bp-cand"><div class="note" style="margin:0">📍 ${esc(c.rotulo)}${c.dist!=null?" · a "+km(c.dist)+" de você":""}</div><button class="btn cp-mini" onclick="BP.infUsar(${k})">É esta loja</button></div>`).join(""):""}
+    <div class="row"><button class="btn cp-mini" onclick="BP.infFechar()">Cancelar</button></div></div>`;}
+BP.atualizarAviso=function(){try{const e=$("bpLojasAviso");if(e&&podeRedesenhar())e.innerHTML=avisoLojasHtml();}catch(x){}};
+BP.infRedesenhar=function(){try{const e=$("bpLojasAviso");if(e)e.innerHTML=avisoLojasHtml();}catch(x){}};
+BP.infAbrir=function(rede){st.inf={rede:String(rede||""),txt:"",msg:"",cand:[],busy:false};BP.infRedesenhar();BP.foco("bpInfEnd");};
+BP.infFechar=function(){st.inf=null;BP.infRedesenhar();};
+BP.infBuscar=async function(){const i=st.inf;if(!i)return;const q=(val("bpInfEnd")||i.txt||"").replace(/\s+/g," ").trim().slice(0,160);i.txt=q;i.cand=[];i.msg="";
+  if(q.length<5){i.msg="Escreva a rua, o número e a cidade (ex.: Rua Exemplo, 123, nome da cidade).";BP.infRedesenhar();return;}
+  i.busy=true;BP.infRedesenhar();
+  try{const j=await nominatim("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=3&countrycodes=br&q="+encodeURIComponent(q));
+    i.cand=(Array.isArray(j)?j:[]).map(x=>({lat:Math.round(+x.lat*1e5)/1e5,lon:Math.round(+x.lon*1e5)/1e5,rotulo:String(x.display_name||"").slice(0,120)})).filter(x=>Number.isFinite(x.lat)&&Number.isFinite(x.lon)&&Math.abs(x.lat)<=90&&Math.abs(x.lon)<=180).map(x=>Object.assign(x,{dist:st.pos?BP.km(st.pos,x):null}));
+    if(!i.cand.length)i.msg="Não achei esse endereço. Confira a rua, o número e a cidade.";}
+  catch(e){i.msg="Não consegui procurar o endereço agora ("+BP.erroCurto(e)+"). Tente de novo.";}
+  i.busy=false;if(st.inf===i)BP.infRedesenhar();};
+// grava como loja da lista de mercados (registro cat-*, sincroniza com o outro aparelho) com o ponto já confirmado (sem geocodificar de novo)
+BP.infUsar=function(k){const i=st.inf,c=i&&i.cand&&i.cand[k];if(!c||!i.rede)return;
+  const end=c.rotulo||"endereço informado",nome=(i.rede+" "+end.split(",")[0]).trim().slice(0,60),id=CP.idLoja(nome,end);
+  CP.importarCatalogo([{id,nome,endereco:end,rede:i.rede}]);
+  const g=lerGeo();g["c:"+id.slice(4)]={em:Date.now(),lat:c.lat,lon:c.lon,aprox:false};gravarGeo(g);
+  st.inf=null;BP.refazerDistancias();BP.infRedesenhar();};
 
 // ---------- catálogo dos sites (VTEX) ----------
 let memCache={}; // se o navegador não deixar usar sessionStorage, o cache de 10/30 min continua valendo em memória
@@ -6894,7 +6992,7 @@ function doHistorico(termo){const out=[];
 // cfg.custoKm = o custo por km EM USO (veículo, se informado; senão o fixo): quem chama monta com cfgDesloc()
 const cfgDesloc=()=>Object.assign({},CP.config(),{custoKm:CP.custoKmUsado().valor});
 BP.ranquear=function(ofertas,qtd,lojas,cfg){qtd=+qtd||1;
-  ofertas.forEach(o=>{if(o.fonte==="site"){const l=lojas[o.rede];o.dist=l?l.dist:null;o.loja=l?l.nome:"";o.lojaLat=l&&l.lat;o.lojaLon=l&&l.lon;}
+  ofertas.forEach(o=>{if(o.fonte==="site"){const l=lojas[o.rede];o.dist=l?l.dist:null;o.loja=l?l.nome:"";o.lojaLat=l&&l.lat;o.lojaLon=l&&l.lon;o.lojaEnd=l?l.end||"":"";}
     o.desloc=cfg.contarDeslocamento&&o.dist!=null?CP.r2(2*o.dist*(+cfg.custoKm||0)):0;
     o.semDesloc=cfg.contarDeslocamento&&o.dist==null&&o.fonte==="site"?(st.pos?"loja":"pos"):"";o.custo=CP.r2(o.preco*qtd+o.desloc);});
   const todosBase=ofertas.length&&ofertas.every(o=>o.porBase&&o.base===ofertas[0].base);
@@ -7073,7 +7171,7 @@ BP.buscarLista=async function(){const l=CP.listasAbertas()[0];if(!l){alert("Nenh
     const tarefas=[];its.forEach(i=>redes0.forEach(r=>{const t=()=>buscarSite(r,consultaDoItem(i.nome)).then(x=>({i,r,x}));t.rede=r;tarefas.push(t);}));
     const rs=await emLotes(tarefas,3);
     if(mapaP)await mapaP;lojas=lojasPorRede();const redes=redesNoRaio(Object.keys(sitesAtivos()),lojas,cfg.raioKm);
-    const porRede={};redes.forEach(r=>porRede[r]={rede:r,itens:[],faltam:[],total:0,dist:lojas[r]?lojas[r].dist:null,loja:lojas[r]?lojas[r].nome:""});
+    const porRede={};redes.forEach(r=>porRede[r]={rede:r,itens:[],faltam:[],total:0,dist:lojas[r]?lojas[r].dist:null,loja:lojas[r]?lojas[r].nome:"",lojaEnd:lojas[r]?lojas[r].end||"":""});
     const falhou=new Set(),consultas={};rs.forEach((z,k)=>{const r=tarefas[k].rede;if(!porRede[r])return;if(z&&z.erro){falhou.add(r);consultas[r]={erro:z.erro};}else if(!consultas[r]||!consultas[r].erro)consultas[r]={ok:true,n:((consultas[r]||{}).n||0)+((z&&z.x&&z.x.length)||0),em:Date.now()};});
     rs.forEach(z=>{if(!z||z.erro)return;const{i,r,x}=z;if(!porRede[r])return;const melhor=[...x].sort((a,b)=>(a.porBase&&b.porBase&&a.base===b.base?a.porBase-b.porBase:a.preco-b.preco))[0];
       if(melhor){porRede[r].itens.push({item:i,o:melhor,v:CP.r2(melhor.preco*(+i.qtd||1))});porRede[r].total+=melhor.preco*(+i.qtd||1);}else porRede[r].faltam.push(i);});
@@ -7229,7 +7327,7 @@ const redesDe=(r)=>Object.keys(sitesAtivos());
 BP.AVISO_SEM_LOC="sem localização: o custo de ir até o mercado não está somado";
 BP.AVISO_SEM_LOJA="sem loja desta rede no mapa: o custo de ir até o mercado não está somado";
 BP.deslocInfo=function(rede){const cfg=CP.config();if(!cfg.contarDeslocamento)return{v:0,sem:""};const l=lojasPorRede()[rede];
-  if(l&&l.dist!=null)return{v:CP.r2(2*l.dist*CP.custoKmUsado().valor),sem:""};return{v:0,sem:st.pos?"loja":"pos"};};
+  if(l&&l.dist!=null)return{v:CP.r2(2*l.dist*CP.custoKmUsado().valor),sem:"",loja:{nome:l.nome,end:l.end||"",dist:l.dist,n:l.n||1}};return{v:0,sem:st.pos?"loja":"pos"};};
 BP.desloc=rede=>BP.deslocInfo(rede).v;
 BP.avisoSemDesloc=sem=>sem==="pos"?BP.AVISO_SEM_LOC:sem==="loja"?BP.AVISO_SEM_LOJA:"";
 const pend=l=>CP.itensDa(l.id).filter(i=>i.estado==="pendente");
@@ -7271,9 +7369,9 @@ BP.rodarAnalise=async function(){const R=st.precosLista;if(!R||R.estado!=="previ
     redes.forEach(r=>{const b=ofs[r]&&ofs[r][c]?BP.melhorDoItem(it,ofs[r][c]):null;if(b){por[r]=b;mercados[r].achou++;mercados[r].total=CP.r2(mercados[r].total+b.v);if(b.aprox)mercados[r].aprox++;if(!melhor||b.v<melhor.v)melhor=Object.assign({rede:r},b);}else mercados[r].faltam.push(it.id);});
     itens[it.id]={por,melhor};if(melhor){dividido=CP.r2(dividido+melhor.v);nDiv++;conta[melhor.rede]=(conta[melhor.rede]||0)+1;}else sem.push(it.id);});
   // opções: tudo em UM mercado (só os itens que ele tem) e o plano misto (cada item no mais barato); custo = itens + deslocamento (ida e volta)
-  const opcoes=Object.values(mercados).filter(m=>m.achou).map(m=>{const di=BP.deslocInfo(m.rede),d=di.v;return{chave:m.rede,tipo:"mercado",rede:m.rede,achou:m.achou,total:m.total,desloc:d,semDesloc:di.sem,custo:CP.r2(m.total+d),faltam:m.faltam.length,aprox:m.aprox};});
+  const opcoes=Object.values(mercados).filter(m=>m.achou).map(m=>{const di=BP.deslocInfo(m.rede),d=di.v;return{chave:m.rede,tipo:"mercado",rede:m.rede,achou:m.achou,total:m.total,desloc:d,semDesloc:di.sem,loja:di.loja||null,custo:CP.r2(m.total+d),faltam:m.faltam.length,aprox:m.aprox};});
   const usadas=Object.keys(conta);
-  if(usadas.length>=2){const d=CP.r2(usadas.reduce((s,r)=>s+BP.desloc(r),0));opcoes.push({chave:"misto",tipo:"misto",redes:usadas,achou:nDiv,total:dividido,desloc:d,semDesloc:usadas.some(r=>BP.deslocInfo(r).sem)?(st.pos?"loja":"pos"):"",custo:CP.r2(dividido+d),faltam:sem.length,aprox:0});}
+  if(usadas.length>=2){const d=CP.r2(usadas.reduce((s,r)=>s+BP.desloc(r),0));opcoes.push({chave:"misto",tipo:"misto",redes:usadas,lojas:usadas.map(r=>{const di=BP.deslocInfo(r);return di.loja?Object.assign({rede:r},di.loja):null;}).filter(Boolean),achou:nDiv,total:dividido,desloc:d,semDesloc:usadas.some(r=>BP.deslocInfo(r).sem)?(st.pos?"loja":"pos"):"",custo:CP.r2(dividido+d),faltam:sem.length,aprox:0});}
   const maxAchou=Math.max(0,...opcoes.map(o=>o.achou));
   const melhorOp=opcoes.filter(o=>o.achou===maxAchou).sort((a,b)=>a.custo-b.custo)[0]||null;
   opcoes.sort((a,b)=>b.achou-a.achou||a.custo-b.custo);
@@ -7375,7 +7473,7 @@ function statusTxt(){const r=st.res;if(!r)return"";
   if(r.lento>0)return`🟡 ${CP.fmtNum(r.lento,0)} mercado(s) demorou(aram) mais de ${CP.fmtNum(Math.round(BP.limiteMercadoMs/1000),0)} s: o resultado abaixo é parcial. Se responderem depois, entram sozinhos, ou toque em “tentar de novo” na linha do mercado.`;
   if(r.mapaPend)return"📍 Pronto. Calculando as distâncias…";
   return"✔ Pronto.";}
-BP.atualizarResultados=function(){try{const e=$("bpResultados");if(e)e.innerHTML=resultadosHtml();const s=$("bpStatus");if(s)s.textContent=statusTxt();}catch(x){}};
+BP.atualizarResultados=function(){try{const e=$("bpResultados");if(e)e.innerHTML=resultadosHtml();BP.atualizarAviso();const s=$("bpStatus");if(s)s.textContent=statusTxt();}catch(x){}};
 function resultadosHtml(){const r=st.res;if(!r||st.modo!=="produto")return"";const SA=sitesAtivos();
   const todas=r.todas||r.ofertas||[],vis=BP.visao(todas,st.filtro,st.emb),esc0=st.incluirAntigos?0:todas.filter(BP.antigo).length;
   const escolha=r.escolha==="refinada"?`<p class="note" style="margin:0 0 4px">🔎 Busca refinada: <b>${esc(r.refinadoRot)}</b> <button class="btn cp-mini" onclick="BP.mudarEscolha()">mudar</button></p>`:r.escolha==="exata"?`<p class="note" style="margin:0 0 4px">🔎 Busca exata de “${esc(r.termo)}” (escolha lembrada) <button class="btn cp-mini" onclick="BP.mudarEscolha()">mudar</button></p>`:"";
@@ -7394,13 +7492,13 @@ BP.incluirAntigos=function(v){st.incluirAntigos=!!v;BP.reordenar();};
 const ofertaHtml=o=>{const f=BP.frescor(o),cor=f.cls==="ambar"?"color:#b45309":f.cls==="cinza"?"color:var(--mut)":"";
   return`<div class="bp-oferta${f.antigo?" bp-velha":""}">${o.img?`<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="bp-sem-img" aria-hidden="true">${o.fonte==="site"?"🛒":"🧾"}</div>`}
      <div class="bp-info"><div>${(o.selo||[]).map(s=>`<span class="pill teal">${esc(s)}</span>`).join(" ")}</div><b>${esc(o.nome)}</b>${o.emb?` <span class="pill">${esc(o.emb.rotPack)}</span>`:""}
-       <div class="note bp-fresco" style="margin:0;${cor}"><span aria-hidden="true">${f.ic}</span> ${o.fonte==="site"?"site "+esc(o.rede)+" · ":"sua nota · "+esc(o.loja||"")+" · "}${esc(f.txt)}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja):""}${o.atacado?` · atacado: ${F(o.atacado.preco)} cada a partir de ${CP.fmtNum(o.atacado.min,0)} un.`:""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
-       <div class="note" style="margin:0">${medidaHtml(o)}${o.desloc?(o.porBase?" · ":"")+"com deslocamento: <b>"+F(o.custo)+"</b>":""}${o.semDesloc?`<span style="color:#b45309">${o.desloc||o.porBase?" · ":""}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}</div>
+       <div class="note bp-fresco" style="margin:0;${cor}"><span aria-hidden="true">${f.ic}</span> ${o.fonte==="site"?"site "+esc(o.rede)+" · ":"sua nota · "+esc(o.loja||"")+" · "}${esc(f.txt)}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja)+(o.lojaEnd?" ("+esc(o.lojaEnd)+")":""):""}${o.atacado?` · atacado: ${F(o.atacado.preco)} cada a partir de ${CP.fmtNum(o.atacado.min,0)} un.`:""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
+       <div class="note" style="margin:0">${medidaHtml(o)}${o.desloc?(o.porBase?" · ":"")+"com deslocamento: <b>"+F(o.custo)+"</b>":""}${o.semDesloc==="pos"?`<span style="color:#b45309">${o.desloc||o.porBase?" · ":""}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}</div>
        <div class="row" style="margin-top:2px">${o.link?lk(o.link,"ver no site"):""}${o.lojaLat!=null?lk(mapaUrl(o.lojaLat,o.lojaLon),"mapa da loja"):""}</div></div>
      <div class="bp-preco">${o.de?`<s class="note" style="margin:0">${F(o.de)}</s>`:""}<b>${F(o.preco)}</b>${o.de?`<span class="pill rose">-${CP.fmtNum(Math.round((1-o.preco/o.de)*100),0)}%</span>`:""}</div></div>`;};
 function passo3Html(){if(st.modo!=="produto"||!st.res)return"";
   return`<div class="card bp-passo" id="bpPasso3"><h2 class="bp-h" id="bpResTit" tabindex="-1"><span class="bp-n">3 de 3</span>Compare os resultados</h2>
-    <p class="note" id="bpStatus" role="status" aria-live="polite" style="margin:0 0 6px">${esc(statusTxt())}</p><div id="bpResultados">${resultadosHtml()}</div></div>`;}
+    <p class="note" id="bpStatus" role="status" aria-live="polite" style="margin:0 0 6px">${esc(statusTxt())}</p><div id="bpLojasAviso">${avisoLojasHtml()}</div><div id="bpResultados">${resultadosHtml()}</div></div>`;}
 BP.desenhar=function(el){const cfg=CP.config();try{BP.catalogoAgendar();}catch(e){}
   const SA=sitesAtivos(),SL=sitesLink(),cad=CP.mercadosSite();
   const statusCad=m=>m.consulta?"✔ tem consulta de preço":"🔗 só link (não tem consulta de preço)";
@@ -7430,6 +7528,7 @@ BP.desenhar=function(el){const cfg=CP.config();try{BP.catalogoAgendar();}catch(e
 BP.abrir=function(){try{const p=st.pos;if(p&&Date.now()-(+p.em||0)>=(p.fonte==="endereco"?24:6)*3600000){st.pos=null;st.lugar="";}}catch(e){}
   try{if(st.pos&&!st.perto.length&&!falhouHaPouco())BP.mercadosPerto().then(()=>{BP.atualizarMapa();BP.refazerDistancias();},()=>{});}catch(e){}
   try{if(st.pos&&st.pos.fonte!=="endereco"&&!st.lugar&&!st.lugarTentado){st.lugarTentado=true;lugarAproximado().then(()=>BP.atualizarLugar());}}catch(e){}
+  try{if(st.pos)BP.descobrirLojas();}catch(e){}
   BP.render();};
 BP.refazerDistancias=function(){BP.atualizarMapa();if(st.modo==="produto"&&st.res&&ctxBusca&&ctxBusca.id===buscaId)ctxBusca.recalc();};
 // ---------- tela: importar a lista de mercados da cidade (dado do usuário) ----------
@@ -7462,7 +7561,7 @@ function telaCesta(){const c=st.cesta;const melhor=c.lista[0];
   return `<div class="card"><h3>Onde comprar “${esc(c.nome)}” (${c.n} itens pendentes)</h3>
     ${melhor?`<p class="note" style="margin-top:0">Melhor opção: <b>${esc(melhor.rede)}</b> — ${F(melhor.total)} pelos preços do site${melhor.desloc?" + "+F(melhor.desloc)+" de deslocamento":""}${melhor.faltam.length?` (não achei ${CP.fmtNum(melhor.faltam.length,0)} item(ns))`:""}.</p>`:""}
     <table><tr><th>Mercado</th><th class="n">Achou</th><th class="n">Total</th></tr>
-      ${c.lista.map(p=>`<tr><td><b>${esc(p.rede)}</b>${p.loja?`<div class="note" style="margin:0">${esc(p.loja)}${p.dist!=null?" · "+km(p.dist):""}</div>`:""}</td><td class="n">${p.itens.length}/${c.n}</td><td class="n"><b>${F(p.custo)}</b><div class="note" style="margin:0">itens ${F(p.total)}${p.desloc?" + desloc. "+F(p.desloc):""}</div>${p.semDesloc?`<div class="note" style="margin:0;color:#b45309">${esc(BP.avisoSemDesloc(p.semDesloc))}</div>`:""}</td></tr>`).join("")||'<tr><td colspan="3" class="note">Nenhum site achou os itens.</td></tr>'}</table>
+      ${c.lista.map(p=>`<tr><td><b>${esc(p.rede)}</b>${p.loja?`<div class="note" style="margin:0">${esc(p.loja)}${p.lojaEnd?" ("+esc(p.lojaEnd)+")":""}${p.dist!=null?" · "+km(p.dist):""}</div>`:""}</td><td class="n">${p.itens.length}/${c.n}</td><td class="n"><b>${F(p.custo)}</b><div class="note" style="margin:0">itens ${F(p.total)}${p.desloc?" + desloc. "+F(p.desloc):""}</div>${p.semDesloc?`<div class="note" style="margin:0;color:#b45309">${esc(BP.avisoSemDesloc(p.semDesloc))}</div>`:""}</td></tr>`).join("")||'<tr><td colspan="3" class="note">Nenhum site achou os itens.</td></tr>'}</table>
     ${c.semResposta.length?`<p class="note">Sem resultado de: ${c.semResposta.map(esc).join(", ")}.</p>`:""}
     ${c.dupla&&melhor?`<p class="note">Dividindo entre <b>${c.dupla.redes.map(esc).join(" e ")}</b> (cada item no mais barato dos dois): ${F(c.dupla.custo)} com deslocamento — ${c.dupla.custo<melhor.custo?`<b class="teal">economiza ${F(melhor.custo-c.dupla.custo)}</b>`:`<b>não compensa</b> (fica ${F(c.dupla.custo-melhor.custo)} mais caro)`}.</p>`:""}
     ${c.lista.map(p=>`<details style="margin-top:6px"><summary class="note">${esc(p.rede)}: ver itens</summary><table>${p.itens.map(x=>`<tr><td>${esc(x.item.nome)}<div class="note" style="margin:0">${esc(x.o.nome)}</div></td><td class="n">${F(x.v)}</td></tr>`).join("")}${p.faltam.map(i=>`<tr><td>${esc(i.nome)}</td><td class="n note">não achei</td></tr>`).join("")}</table></details>`).join("")}
