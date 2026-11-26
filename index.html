@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.25-5";
+const APP_VERSAO_TXT="2026.11.26-1";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4655,7 +4655,8 @@ CP.eu=function(){let nome="";try{nome=localStorage.getItem(CHAVE_EU)||"";}catch(
   if(!nome){try{nome=nomeAparelho().split(" · ")[0];}catch(e){nome="aparelho";}}
   return{id,nome};};
 CP.nomeDefinido=function(){try{return!!localStorage.getItem(CHAVE_EU);}catch(e){return true;}};
-CP.definirEu=function(nome){nome=String(nome||"").trim().slice(0,30);try{if(nome)localStorage.setItem(CHAVE_EU,nome);else localStorage.removeItem(CHAVE_EU);}catch(e){}};
+CP.definirEu=function(nome){nome=String(nome||"").trim().slice(0,30);try{if(nome)localStorage.setItem(CHAVE_EU,nome);else localStorage.removeItem(CHAVE_EU);}catch(e){}
+  try{if(CP.registrarAparelho(true))CP.gravar();}catch(e){}}; // o nome vai para um registro da própria Lista (nunca para state._aparelhos)
 
 // ---------- validação: tudo que vem da nuvem/arquivo passa por aqui ----------
 const TXT=(r,k)=>{if(r[k]!=null&&typeof r[k]!=="string")r[k]=String(r[k]);};
@@ -4663,8 +4664,38 @@ const LISTA=(r,k)=>{if(!Array.isArray(r[k]))r[k]=[];};
 const ANO_2100=4102444800000; // só descarta carimbo ABSURDO (não "agora+1 dia": um relógio adiantado não pode ganhar de todos)
 // cartões de VR (config): tudo que vem da nuvem é revalidado (id seguro, dia 1..31, valores finitos, ciclos por data)
 const DATA_ISO=/^\d{4}-\d{2}-\d{2}$/;
+// id de cartão: até 31 caracteres (o registro do ciclo é "ciclo-<cartão>-AAAA-MM-DD" e o id inteiro cabe em 48)
+const CARTAO_ID=/^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_-]{1,31}$/;
+const RX_CICLO=/^ciclo-([A-Za-z0-9_-]{1,31})-(\d{4}-\d{2}-\d{2})$/;
+const AJUSTES=["worker","custoKm","raioKm","pagPadrao","contarDeslocamento"]; // cada ajuste solto mora no seu registro "aj-<nome>"
+const idCiclo=(cid,inicio)=>"ciclo-"+cid+"-"+inicio;
+const dataIsoOk=d=>typeof d==="string"&&DATA_ISO.test(d)&&!isNaN(Date.parse(d+"T12:00:00"));
+// valor de um ajuste solto; undefined = inválido (o padrão continua valendo)
+function ajusteOk(k,v){switch(k){
+  case"worker":return typeof v==="string"&&v.length<=300?v:undefined;
+  case"custoKm":return typeof v==="number"&&isFinite(v)&&v>=0&&v<=1000?v:undefined;
+  case"raioKm":return typeof v==="number"&&isFinite(v)&&v>=1&&v<=40?v:undefined;
+  case"pagPadrao":return typeof v==="string"&&/^[a-z]{1,12}$/.test(v)?v:undefined;
+  case"contarDeslocamento":return typeof v==="boolean"?v:undefined;}
+  return undefined;}
+const numOk=(v,max,min)=>v!=null&&v!==""&&isFinite(+v)&&+v>=(min==null?0:min)&&+v<=max;
+// registros novos da coleção config (a configuração deixou de ser um registro único): validados um a um; inválido = descartado (lança)
+function tipoConfig(id){return id.startsWith("vr-")?"vr":id.startsWith("ciclo-")?"ciclo":id.startsWith("aj-")?"aj":id.startsWith("ap-")?"ap":null;}
+function limparConfigNovo(t,x){const o={id:x.id,_em:x._em};if(x._por!=null)o._por=x._por;
+  if(t==="vr"){if(!CARTAO_ID.test(x.id.slice(3)))throw new Error("cartão inválido");
+    o.nome=String(x.nome??"").slice(0,40)||"VR";o.diaCredito=Math.min(31,Math.max(1,Math.round(+x.diaCredito)||30));o.deFinancas=!!x.deFinancas;
+    o.ordem=isFinite(+x.ordem)?Math.min(1e6,Math.max(0,Math.round(+x.ordem))):0;
+    if(numOk(x.valorOriginal,1e12))o.valorOriginal=r2(Math.min(1e7,+x.valorOriginal));}
+  else if(t==="ciclo"){const m=RX_CICLO.exec(x.id);if(!m||!dataIsoOk(m[2]))throw new Error("ciclo inválido");
+    if(numOk(x.valorOriginal,1e12))o.valorOriginal=r2(Math.min(1e7,+x.valorOriginal));
+    if(numOk(x.saldoAgora,1e7,-1e7))o.saldoAgora=r2(+x.saldoAgora);
+    if(x.usouTudo)o.usouTudo=true;if(dataIsoOk(x.em))o.em=x.em;}
+  else if(t==="aj"){const k=x.id.slice(3);if(!AJUSTES.includes(k))throw new Error("ajuste desconhecido");const v=ajusteOk(k,x.valor);if(v===undefined)throw new Error("ajuste inválido");o.valor=v;}
+  else{if(!ID_OK.test(x.id.slice(3)))throw new Error("aparelho inválido");
+    o.nome=String(x.nome??"").slice(0,30);o.versao=String(x.versao??"").slice(0,30);o.visto=isFinite(+x.visto)?Math.min(Math.max(+x.visto,0),ANO_2100):0;}
+  return o;}
 function limparCartoes(l){if(!Array.isArray(l))return[];const vistos=new Set(),out=[];
-  l.forEach(c=>{if(!c||typeof c!=="object"||Array.isArray(c)||typeof c.id!=="string"||!ID_OK.test(c.id)||vistos.has(c.id)||out.length>=8)return;vistos.add(c.id);
+  l.forEach(c=>{if(!c||typeof c!=="object"||Array.isArray(c)||typeof c.id!=="string"||!CARTAO_ID.test(c.id)||vistos.has(c.id)||out.length>=8)return;vistos.add(c.id);
     const o={id:c.id,nome:String(c.nome??"").slice(0,40)||"VR",diaCredito:Math.min(31,Math.max(1,Math.round(+c.diaCredito)||30)),deFinancas:!!c.deFinancas,ciclos:{}};
     if(c.valorOriginal!=null&&c.valorOriginal!==""&&isFinite(+c.valorOriginal)&&+c.valorOriginal>=0)o.valorOriginal=r2(+c.valorOriginal);
     if(c.ciclos&&typeof c.ciclos==="object"&&!Array.isArray(c.ciclos))Object.keys(c.ciclos).slice(0,60).forEach(k=>{const a=c.ciclos[k];if(!DATA_ISO.test(k)||!a||typeof a!=="object")return;const z={};
@@ -4681,8 +4712,8 @@ function limpar(c,r){const x=Object.assign({},r);
     if(x.cartoes!=null)x.cartoes=Array.isArray(x.cartoes)?x.cartoes.filter(k=>k&&typeof k==="object"&&typeof k.id==="string"&&isFinite(+k.valor)).map(k=>({id:k.id.slice(0,48),valor:+k.valor})):[];}
   if(c==="produtos"){LISTA(x,"apelidos");LISTA(x,"cods");x.apelidos=x.apelidos.map(String);x.cods=x.cods.map(String);["nome","secao","un"].forEach(k=>TXT(x,k));
     if(x.sobra!=null&&!(typeof x.sobra==="object"&&!Array.isArray(x.sobra)&&isFinite(+x.sobra.qtd)&&+x.sobra.qtd>=0&&/^\d{4}-\d{2}-\d{2}$/.test(String(x.sobra.em))))delete x.sobra;}
-  if(c==="listas"||c==="itens"||c==="mercados"){["nome","secao","un","estado","status","listaId","produtoId","apelido","rede","cnpj","endereco","mercadoId"].forEach(k=>TXT(x,k));}
-  if(c==="config"){LISTA(x,"anos");x.anos=x.anos.map(String);TXT(x,"worker");if(!x.ofertas||typeof x.ofertas!=="object")x.ofertas={};if(x.cartoesVR!=null)x.cartoesVR=limparCartoes(x.cartoesVR);}
+  if(c==="listas"||c==="itens"||c==="mercados"){["nome","secao","un","estado","status","listaId","produtoId","apelido","rede","cnpj","endereco","mercadoId","arquivada"].forEach(k=>TXT(x,k));}
+  if(c==="config"){const t=tipoConfig(x.id);if(t)return limparConfigNovo(t,x);LISTA(x,"anos");x.anos=x.anos.map(String);TXT(x,"worker");if(!x.ofertas||typeof x.ofertas!=="object")x.ofertas={};if(x.cartoesVR!=null)x.cartoesVR=limparCartoes(x.cartoesVR);}
   return x;}
 function normalizar(o){
   const d=vazio();if(!o||typeof o!=="object"||Array.isArray(o))return d;
@@ -4711,8 +4742,10 @@ CP.mesclar=mesclar;
 let D=null;
 function lerLS(){try{const t=localStorage.getItem(CHAVE);return t?JSON.parse(t):null;}catch(e){return null;}}
 CP.dados=function(){if(!D){let cru=null;try{cru=localStorage.getItem(CHAVE);}catch(e){}
-    let j=null;try{j=cru?JSON.parse(cru):null;}catch(e){}D=normalizar(j);if(cru)copiaAoAbrir(cru);}return D;};
-CP.substituir=function(novo){const ls=lerLS();D=ls?mesclar(normalizar(novo),ls):normalizar(novo);gravarLS();};
+    let j=null;try{j=cru?JSON.parse(cru):null;}catch(e){}D=normalizar(j);if(cru)copiaAoAbrir(cru);
+    // ao abrir: a configuração antiga (um registro só) vira registros pequenos; e o nome deste aparelho é renovado (no máx. 1 vez a cada 6 h)
+    try{const m=migrarConfig(),a=CP.registrarAparelho();if(m||a)gravarLS();}catch(e){}}return D;};
+CP.substituir=function(novo){const ls=lerLS();D=ls?mesclar(normalizar(novo),ls):normalizar(novo);try{migrarConfig();}catch(e){}gravarLS();};
 // Gravar no aparelho. O localStorage é UM SÓ para as finanças e para as compras (~5 milhões de caracteres): se encher, as compras
 // não podem tirar o espaço das finanças. Se a gravação falhar, o app libera sozinho o que é dispensável (cópias automáticas,
 // registro de eventos, cache de mapas) e tenta de novo; se ainda assim não couber, avisa na tela (CP.erroGravar) em vez de falhar em silêncio.
@@ -4740,7 +4773,7 @@ CP.tamanho=function(){let compras=0,total=0;try{compras=bytesDe(localStorage.get
   for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);total+=bytesDe(k)+bytesDe(localStorage.getItem(k));}}catch(e){}
   return{compras,total,limite:5000000};};
 // grava juntando antes com o que outra janela do mesmo navegador possa ter gravado
-CP.gravar=function(){const ls=lerLS();if(ls)D=mesclar(CP.dados(),ls);gravarLS();if(typeof CP.aoGravar==="function")CP.aoGravar();};
+CP.gravar=function(){const ls=lerLS();if(ls)D=mesclar(CP.dados(),ls);try{migrarConfig();}catch(e){}gravarLS();if(typeof CP.aoGravar==="function")CP.aoGravar();};
 // outra janela gravou: junta (sem perder nada desta)
 CP.absorver=function(){const ls=lerLS();if(ls&&D)D=mesclar(D,ls);else if(ls)D=normalizar(ls);};
 // cópia automática: UMA por dia, feita ao abrir (como estava antes de qualquer edição de hoje), só a última (a cópia ocupava a memória das finanças).
@@ -4757,15 +4790,46 @@ CP.por=(col,id)=>{const m=CP.dados()[col];if(!m||typeof id!=="string"||!TEM(m,id
 CP.vivos=col=>Object.values(CP.dados()[col]).filter(r=>r&&!r._del);
 CP.salvarReg=function(col,r){if(!r.id)r.id=novoId();carimbar(r);CP.dados()[col][r.id]=r;return r;};
 // (a compra apagada guarda a data: o marcador fica no MESMO documento do ano dela na nuvem)
-CP.apagar=function(col,id){const d=CP.dados();if(typeof id!=="string"||!TEM(d[col],id))return;const r=d[col][id];if(!r)return;const m={id,_del:true,_em:r._em};if(r.data)m.data=r.data;d[col][id]=carimbar(m);};
+const marcadorDe=r=>{const m={id:r.id,_del:true,_em:r._em};if(r.data)m.data=r.data;return m;};
+CP.apagar=function(col,id){const d=CP.dados();if(typeof id!=="string"||!TEM(d[col],id))return;const r=d[col][id];if(!r)return;d[col][id]=carimbar(marcadorDe(Object.assign({},r,{id})));};
 // marcadores de exclusão com mais de 180 dias saem (todos os aparelhos já viram)
 CP.limparMarcadores=function(){const d=CP.dados(),lim=Date.now()-180*86400000;
   COLECOES.forEach(c=>{for(const[k,r]of Object.entries(d[c]))if(r._del&&(+r._em||0)<lim)delete d[c][k];});};
 
-// ---------- configuração (registro "geral" na coleção config) ----------
+// ---------- configuração: um registro por coisa (coleção config) ----------
+// Antes tudo morava em UM registro ("geral"): um saldo de cartão informado sem sinal podia sumir quando outro aparelho regravava
+// qualquer ajuste. Agora:  vr-<cartão> (nome, dia, valor, ordem) · ciclo-<cartão>-<AAAA-MM-DD do início> (valor editado, saldo informado) ·
+// aj-<ajuste> ({valor}) · ap-<aparelho> (nome na Lista, versão, visto) · anos (lista de anos) · geral (só o que sobrou: anos, ofertas).
+// Só disputam o mesmo registro se mexerem no MESMO cartão e ciclo (ou no mesmo ajuste).
 const CONFIG_PADRAO={id:"geral",worker:"",custoKm:0.9,raioKm:8,pagPadrao:"va",contarDeslocamento:true,anos:[],ofertas:{}};
-CP.config=function(){const c=CP.dados().config.geral;return Object.assign({},CONFIG_PADRAO,c&&!c._del?c:{});};
-CP.salvarConfig=function(mud){const c=Object.assign(CP.config(),mud);CP.salvarReg("config",c);CP.gravar();};
+const CAMPOS_LEGADO=["cartoesVR"].concat(AJUSTES);
+// MIGRAÇÃO (idempotente): lê o "geral" antigo e cria os registros novos que ainda não existem, com o MESMO carimbo do "geral"
+// (_em do geral, _por "migracao") — ids e conteúdo iguais em todos os aparelhos, então dois aparelhos migrando juntos geram o mesmo
+// registro (sem duplicar) e qualquer edição de verdade (carimbo novo) sempre ganha da migração. Depois tira do "geral" o que migrou.
+// Registro já existente (vivo ou apagado) nunca é recriado: um cartão removido não volta.
+function migrarConfig(){const d=D;if(!d)return false;const cfg=d.config,g=cfg.geral;
+  if(!g||g._del||!CAMPOS_LEGADO.some(k=>TEM(g,k)))return false;
+  const base=Math.max(+g._em||0,1);
+  const cria=(id,campos)=>{if(TEM(cfg,id))return;cfg[id]=Object.assign({id,_em:base,_por:"migracao"},campos);};
+  limparCartoes(g.cartoesVR).forEach((c,i)=>{
+    const r={nome:c.nome,diaCredito:c.diaCredito,deFinancas:c.deFinancas,ordem:i};if(c.valorOriginal!=null)r.valorOriginal=c.valorOriginal;
+    cria("vr-"+c.id,r);
+    Object.keys(c.ciclos).forEach(k=>cria(idCiclo(c.id,k),c.ciclos[k]));});
+  AJUSTES.forEach(k=>{if(TEM(g,k)){const v=ajusteOk(k,g[k]);if(v!==undefined)cria("aj-"+k,{valor:v});}});
+  CAMPOS_LEGADO.forEach(k=>{delete g[k];});carimbar(g);
+  return true;}
+CP.migrarConfig=()=>migrarConfig();
+// as configurações todas juntas (mesmo formato de antes, sem os cartões — esses vêm de CP.cartoesVR)
+CP.config=function(){try{migrarConfig();}catch(e){}const cfg=CP.dados().config,g=cfg.geral;const o=Object.assign({},CONFIG_PADRAO,g&&!g._del?g:{});
+  AJUSTES.forEach(k=>{const r=TEM(cfg,"aj-"+k)?cfg["aj-"+k]:null;if(r&&!r._del&&TEM(r,"valor"))o[k]=r.valor;});return o;};
+function salvarAjuste(k,v){v=ajusteOk(k,v);if(v===undefined||estavel(v)===estavel(CP.config()[k]))return;
+  const id="aj-"+k,ex=TEM(CP.dados().config,id)?CP.dados().config[id]:null;
+  const r=ex&&!ex._del?ex:Object.assign({id},ex?{_em:ex._em}:{});r.valor=v;CP.salvarReg("config",r);}
+CP.salvarConfig=function(mud){mud=mud||{};const resto={};
+  Object.keys(mud).forEach(k=>{if(AJUSTES.includes(k))salvarAjuste(k,mud[k]);else if(k==="cartoesVR")definirCartoes(mud[k]);else resto[k]=mud[k];});
+  if(Object.keys(resto).length){const cfg=CP.dados().config,ex=TEM(cfg,"geral")?cfg.geral:null;
+    const g=ex&&!ex._del?ex:Object.assign({id:"geral"},ex?{_em:ex._em}:{});Object.assign(g,resto);g.id="geral";CP.salvarReg("config",g);}
+  CP.gravar();};
 
 // ---------- seções do mercado (classificação automática pelo nome) ----------
 const SECOES=[
@@ -4988,16 +5052,56 @@ CP.cicloSeguinte=c=>CP.cicloVR(c.proxInicio,c.dia);
 CP.cicloAnterior=c=>CP.cicloVR(diaAntes(c.inicio),c.dia);
 
 const CARTAO_PADRAO=()=>({id:"vr",nome:"VR",diaCredito:30,deFinancas:true,ciclos:{}});
-CP.cartoesVR=function(){const l=limparCartoes(CP.config().cartoesVR);return l.length?l:[CARTAO_PADRAO()];};
+// os cartões, do principal (menor "ordem") para os outros; cada um com seus ciclos (registros ciclo-<cartão>-<início>).
+// Sem nenhum cartão guardado, existe o "VR" padrão (virtual — só passa a ser guardado quando se grava algo com ele).
+function lerCartoes(){try{migrarConfig();}catch(e){}const cfg=CP.dados().config,cs=[],porId=mapa(),cics=[];
+  for(const k of Object.keys(cfg)){const r=cfg[k];if(!r||r._del)continue;
+    if(k.startsWith("vr-")){const id=k.slice(3);if(!CARTAO_ID.test(id))continue;
+      const c={id,nome:r.nome||"VR",diaCredito:r.diaCredito||30,deFinancas:!!r.deFinancas,ciclos:{},ordem:+r.ordem||0,guardado:true};
+      if(r.valorOriginal!=null)c.valorOriginal=r.valorOriginal;cs.push(c);porId[id]=c;}
+    else{const m=RX_CICLO.exec(k);if(m)cics.push([m[1],m[2],r]);}}
+  if(!cs.length){const c=Object.assign(CARTAO_PADRAO(),{ordem:0});cs.push(c);porId[c.id]=c;}
+  cics.sort((x,y)=>x[1]<y[1]?1:x[1]>y[1]?-1:0); // mais novos primeiro; no máximo 60 por cartão
+  cics.forEach(([cid,ini,r])=>{const c=porId[cid];if(!c||Object.keys(c.ciclos).length>=60)return;const z={};
+    if(r.valorOriginal!=null)z.valorOriginal=r.valorOriginal;if(r.saldoAgora!=null)z.saldoAgora=r.saldoAgora;if(r.usouTudo)z.usouTudo=true;if(r.em)z.em=r.em;c.ciclos[ini]=z;});
+  cs.sort((x,y)=>x.ordem-y.ordem||(x.id<y.id?-1:x.id>y.id?1:0));
+  return cs.slice(0,8);}
+const publico=c=>{const o=Object.assign({},c);delete o.ordem;delete o.guardado;return o;};
+CP.cartoesVR=function(){return lerCartoes().map(publico);};
 CP.cartaoVR=function(id){const l=CP.cartoesVR();return l.find(c=>c.id===id)||l[0];};
+// guarda UM cartão (só o registro dele; o dos outros cartões e dos ajustes não é tocado). Não regrava se nada mudou.
+function gravarCartao(c,ordem){const cfg=CP.dados().config,id="vr-"+c.id,ex=TEM(cfg,id)?cfg[id]:null,vivo=ex&&!ex._del?ex:null;
+  const campos={nome:c.nome,diaCredito:c.diaCredito,deFinancas:!!c.deFinancas,ordem:vivo&&isFinite(+vivo.ordem)?+vivo.ordem:ordem};
+  if(c.valorOriginal!=null)campos.valorOriginal=c.valorOriginal;
+  if(vivo&&["nome","diaCredito","deFinancas","ordem","valorOriginal"].every(k=>estavel(vivo[k]==null?null:vivo[k])===estavel(campos[k]==null?null:campos[k])))return false;
+  const r=vivo||Object.assign({id},ex?{_em:ex._em}:{});["nome","diaCredito","deFinancas","ordem","valorOriginal"].forEach(k=>{if(campos[k]==null)delete r[k];else r[k]=campos[k];});
+  CP.salvarReg("config",r);return true;}
+// guarda/apaga o registro de UM ciclo de um cartão (campos vazios = apaga o registro)
+function gravarCiclo(cid,inicio,campos){const cfg=CP.dados().config,id=idCiclo(cid,inicio),ex=TEM(cfg,id)?cfg[id]:null,vivo=ex&&!ex._del?ex:null;
+  const lim={};["valorOriginal","saldoAgora","usouTudo","em"].forEach(k=>{if(campos&&campos[k]!=null&&campos[k]!==false)lim[k]=campos[k];});
+  if(!Object.keys(lim).length){if(vivo)CP.apagar("config",id);return;}
+  const r=vivo||Object.assign({id},ex?{_em:ex._em}:{});
+  if(vivo&&["valorOriginal","saldoAgora","usouTudo","em"].every(k=>estavel(vivo[k]==null?null:vivo[k])===estavel(lim[k]==null?null:lim[k])))return;
+  ["valorOriginal","saldoAgora","usouTudo","em"].forEach(k=>{if(lim[k]==null)delete r[k];else r[k]=lim[k];});CP.salvarReg("config",r);}
 CP.salvarCartaoVR=function(c){c=limparCartoes([c])[0];if(!c)throw new Error("Cartão inválido (precisa de um id simples, como mae).");
-  const antigo=CP.cartoesVR().find(x=>x.id===c.id);const l=CP.cartoesVR().filter(x=>x.id!==c.id);if(antigo&&!Object.keys(c.ciclos).length)c.ciclos=antigo.ciclos;
-  return CP._guardarCartoes(antigo?CP.cartoesVR().map(x=>x.id===c.id?c:x):l.concat([c]),c);};
-CP._guardarCartoes=function(l,c){CP.salvarConfig({cartoesVR:l});return c;};
-CP.removerCartaoVR=function(id){const l=CP.cartoesVR();if(l.length<=1)return false;CP.salvarConfig({cartoesVR:l.filter(c=>c.id!==id)});return true;};
-function mudarCiclo(cartaoId,ref,fn){const l=CP.cartoesVR(),c=l.find(x=>x.id===cartaoId);if(!c)throw new Error("Cartão não encontrado.");
+  const lista=lerCartoes(),antigo=lista.find(x=>x.id===c.id);
+  if(!antigo&&lista.length>=8)throw new Error("No máximo 8 cartões.");
+  if(!lista.some(x=>x.guardado)&&c.id!=="vr")gravarCartao(CARTAO_PADRAO(),0); // o "VR" padrão (virtual) passa a existir de verdade: continua o principal
+  const guardados=lista.filter(x=>x.guardado);
+  gravarCartao(c,guardados.length?Math.max(...guardados.map(x=>x.ordem))+1:(c.id==="vr"?0:1)); // o principal é o de menor "ordem"; cartão novo vai para o fim
+  Object.keys(c.ciclos).forEach(k=>gravarCiclo(c.id,k,c.ciclos[k]));
+  if(antigo&&!Object.keys(c.ciclos).length)c.ciclos=publico(antigo).ciclos;
+  return c;};
+// lista inteira de cartões (compatibilidade com CP.salvarConfig({cartoesVR}) e com a config antiga): grava os que mudaram e apaga os que sumiram
+function definirCartoes(l){l=limparCartoes(l);const atuais=lerCartoes();
+  l.forEach((c,i)=>{gravarCartao(c,i);Object.keys(c.ciclos).forEach(k=>gravarCiclo(c.id,k,c.ciclos[k]));});
+  atuais.forEach(c=>{if(c.guardado&&!l.some(x=>x.id===c.id))apagarCartao(c.id);});}
+function apagarCartao(id){const cfg=CP.dados().config;CP.apagar("config","vr-"+id);
+  Object.keys(cfg).forEach(k=>{const m=RX_CICLO.exec(k);if(m&&m[1]===id&&!cfg[k]._del)CP.apagar("config",k);});}
+CP.removerCartaoVR=function(id){const l=lerCartoes();if(l.length<=1)return false;apagarCartao(id);return true;};
+function mudarCiclo(cartaoId,ref,fn){const c=CP.cartoesVR().find(x=>x.id===cartaoId);if(!c)throw new Error("Cartão não encontrado.");
   const ci=CP.cicloVR(ref,c.diaCredito);const a=Object.assign({},c.ciclos[ci.id]||{});fn(a);
-  if(Object.keys(a).length)c.ciclos[ci.id]=a;else delete c.ciclos[ci.id];CP.salvarConfig({cartoesVR:l});return ci;}
+  gravarCiclo(c.id,ci.id,a);return ci;}
 // valor original do ciclo: o editado > o das finanças (Editar dados, mês do rótulo) > o valor padrão do cartão
 CP.originalCiclo=function(cartaoId,ref){const c=CP.cartaoVR(cartaoId),ci=CP.cicloVR(ref,c.diaCredito),a=c.ciclos[ci.id]||{};
   if(a.valorOriginal!=null)return{valor:a.valorOriginal,origem:"editado",ciclo:ci};
@@ -5136,13 +5240,51 @@ CP.aplicarProposta=function(prop,nome){const itens=(prop&&prop.produtos||[]).fil
 
 // ---------- exportar / importar (backup das compras) ----------
 CP.exportar=()=>JSON.stringify({tipo:"compras-familia",v:1,em:new Date().toISOString(),dados:CP.dados()},null,1);
+// importar(texto, substituir): "juntar" soma o arquivo ao que já existe. "Substituir" deixa o aparelho IGUAL ao arquivo: o que existia e NÃO está
+// no arquivo vira marcador de apagado (carimbado agora) — assim, com a conta ligada, a nuvem e os outros aparelhos acompanham em vez de
+// devolver tudo. Os ajustes (coleção config: cartões, intermediário, nomes dos aparelhos) nunca são tocados. Devolve {apagados}.
 CP.importar=function(txt,substituir){const j=JSON.parse(txt);if(!j||j.tipo!=="compras-familia")throw new Error("Este arquivo não é um backup das compras.");
-  CP.absorver();
-  const n=normalizar(j.dados);n.config=normalizar(CP.dados()).config; // um backup nunca troca os ajustes (nem o endereço do intermediário)
-  D=substituir?n:mesclar(CP.dados(),n);
-  if(substituir){// substituir também precisa vencer a nuvem: recarimba tudo
-    COLECOES.forEach(c=>Object.values(D[c]).forEach(r=>carimbar(r)));}
-  gravarLS();};
+  CP.absorver();const antes=CP.dados();
+  const n=normalizar(j.dados);n.config=normalizar(antes).config; // um backup nunca troca os ajustes (nem o endereço do intermediário)
+  let apagados=0;
+  if(substituir){COLECOES.forEach(c=>{if(c==="config")return;
+    for(const[k,r]of Object.entries(antes[c])){if(TEM(n[c],k))continue;
+      if(r._del)n[c][k]=r;else{n[c][k]=marcadorDe(r);apagados++;}}});}
+  D=substituir?n:mesclar(antes,n);
+  if(substituir){// substituir também precisa vencer a nuvem: recarimba tudo (menos os ajustes)
+    COLECOES.forEach(c=>{if(c!=="config")Object.values(D[c]).forEach(r=>carimbar(r));});}
+  gravarLS();return{apagados};};
+
+// ---------- arquivar listas fechadas ----------
+// Uma lista fechada há muito tempo só ocupa espaço (e tempo de sincronização): os ITENS dela viram marcadores de apagado. A lista fica (com
+// "arquivada") e as COMPRAS não são tocadas — o histórico de preços e de compras sai das compras, não dos itens da lista.
+function planoArquivo(diasMin){const h=hoje(),out=[];let itens=0,antes=0,depois=0;
+  CP.vivos("listas").forEach(l=>{if(l.status!=="fechada")return;const f=dataIsoOk(l.fechada)?l.fechada:dataIsoOk(l.criada)?l.criada:"";if(!f||dias(f,h)<=diasMin)return;
+    const its=CP.itensDa(l.id);if(!its.length)return;out.push({lista:l,itens:its});itens+=its.length;
+    its.forEach(i=>{antes+=bytesDe(JSON.stringify(i));depois+=bytesDe(JSON.stringify(marcadorDe(i)))+30;});});
+  return{listas:out.length,itens,liberado:Math.max(0,antes-depois),liberadoDepois:Math.max(0,depois),plano:out};}
+// só conta (sem mexer em nada): quantas listas e itens seriam arquivados
+CP.previaArquivar=function(diasMin){const p=planoArquivo(+diasMin||60);return{listas:p.listas,itens:p.itens,liberado:p.liberado,liberadoDepois:p.liberadoDepois};};
+// arquiva as listas fechadas há MAIS de diasMin dias. "liberado" = espaço que sai já (estimado); "liberadoDepois" = o que ainda ocupam os marcadores
+// de apagado (saem sozinhos depois de 180 dias, quando todos os aparelhos já viram)
+CP.arquivarListas=function(diasMin){const p=planoArquivo(+diasMin||60);
+  p.plano.forEach(x=>{x.itens.forEach(i=>CP.apagar("itens",i.id));x.lista.arquivada=hoje();CP.salvarReg("listas",x.lista);});
+  if(p.listas)CP.gravar();
+  return{listas:p.listas,itens:p.itens,liberado:p.liberado,liberadoDepois:p.liberadoDepois};};
+
+// ---------- nome por aparelho (só dentro da Lista) ----------
+// O nome que a pessoa digita na Lista fica num registro da própria Lista (config, id "ap-<aparelho>"); NUNCA em state._aparelhos (finanças).
+// Renovado no máximo a cada 6 h (versão e "visto"); só existe depois que a pessoa escolhe um nome.
+const SEIS_H=6*3600000;
+CP.registrarAparelho=function(forcar){const eu=CP.eu(),id="ap-"+eu.id;if(!ID_OK.test(id))return false;
+  const cfg=CP.dados().config,ex=TEM(cfg,id)?cfg[id]:null,vivo=ex&&!ex._del?ex:null;
+  if(!CP.nomeDefinido()){if(!vivo)return false;CP.apagar("config",id);return true;} // a pessoa apagou o nome: o registro sai
+  let versao="";try{versao=String(APP_VERSAO_TXT).slice(0,30);}catch(e){}
+  const nome=String(eu.nome||"").slice(0,30);
+  if(!forcar&&vivo&&vivo.nome===nome&&vivo.versao===versao&&Date.now()-(+vivo.visto||0)<SEIS_H)return false;
+  const r=vivo||Object.assign({id},ex?{_em:ex._em}:{});r.nome=nome;r.versao=versao;r.visto=Date.now();CP.salvarReg("config",r);return true;};
+// aparelhos conhecidos pela Lista: [{id (o mesmo de state._aparelhos), nome, versao, visto}]
+CP.aparelhosLista=function(){return CP.vivos("config").filter(r=>typeof r.id==="string"&&r.id.startsWith("ap-")).map(r=>({id:r.id.slice(3),nome:r.nome||"",versao:r.versao||"",visto:+r.visto||0}));};
 
 // ---------- documentos da nuvem: listas/produtos/mercados no principal; compras por ano ----------
 CP.DOC_PRINCIPAL="compras";
@@ -5791,9 +5933,10 @@ function telaLista(){
         <select id="cpItemMerc" aria-label="mercado deste item (opcional)"><option value="">qualquer mercado</option>${CP.vivos("mercados").sort((a,b)=>String(a.apelido||a.nome).localeCompare(String(b.apelido||b.nome),"pt-BR")).map(m=>`<option value="${esc(m.id)}">${esc(m.apelido||m.nome)}</option>`).join("")}</select>
         <button class="btn primary" aria-label="adicionar à lista" onclick="CP.addItemTela()">+</button><button class="btn" title="Peguei algo que não estava na lista: entra já como pego" onclick="CP.addPegueiAMais()">✓ peguei a mais</button></div>
       <datalist id="cpProdutos">${CP.vivos("produtos").map(p=>`<option value="${esc(p.nome)}">`).join("")}</datalist>
+      ${!ui.mostrarPegos&&pegos.length?`<div class="cp-aviso card" style="margin:8px 0" role="status">✓ <b>${pegos.length} ${pegos.length===1?"item pego está escondido":"itens pegos estão escondidos"}</b> (o que você já pegou não aparece). <button class="btn cp-mini" onclick="CP.ui.mostrarPegos=true;CP.render()">Mostrar riscados</button></div>`:""}
       ${its.length?"":`<p class="note">Lista vazia. Adicione os itens acima${CP.sugestoesReposicao(l.id).length?" ou use as sugestões abaixo":""}.</p>`}
       ${Object.entries(secoes).map(([s,xs])=>`<div class="cp-secao"><div class="flexbet"><span>${emoSec(s)} ${esc(s)}</span><button class="btn cp-mini" onclick="CP.euPego('${A(s)}')">🙋 eu pego</button></div>${xs.map(linha).join("")}</div>`).join("")}
-      <div class="row" style="margin-top:10px;justify-content:space-between"><label class="note" style="margin:0"><input type="checkbox" ${ui.mostrarPegos?"checked":""} onchange="CP.ui.mostrarPegos=this.checked;CP.render()"> mostrar os já pegos</label>
+      <div class="row" style="margin-top:10px;justify-content:space-between"><label class="note" style="margin:0"><input type="checkbox" ${ui.mostrarPegos?"checked":""} style="accent-color:#0f766e" onchange="CP.ui.mostrarPegos=this.checked;CP.render()"> mostrar os já pegos (riscados)</label>
         <span class="note" style="margin:0">você aparece como <b>${esc(eu)}</b> (<a href="#" onclick="CP.irAba('ajustes');return false">trocar</a>)</span></div>
     </div>
     ${blocoSugestoes(l.id)}
@@ -6039,7 +6182,7 @@ function telaHistorico(){const meses=CP.mesesComCompras();const atual=CP.ymAtual
     ${c.desconto?`<p class="note">Descontos: ${F(c.desconto)}</p>`:""}${c.pagamento==="misto"?`<p class="note">VA: ${F(c.valorVA)} · outro: ${F(CP.totalCompra(c)-c.valorVA)}</p>`:""}
     <div class="row" style="margin-top:8px"><button class="btn danger" onclick="CP.apagarCompra('${A(c.id)}')">apagar esta compra</button></div></details>`;}).join("")||`<div class="card"><p class="note">Nenhuma compra registrada em ${lblMes(ui.mes)}.</p></div>`}
   ${fechadas.length?`<div class="card"><h3>Listas anteriores</h3>${fechadas.map(l=>{const its=CP.itensDa(l.id);const f=its.filter(i=>i.estado==="faltou").length,o=its.filter(i=>i.estado==="outroMercado").length;
-    return `<div class="flexbet cp-lin"><span>${esc(l.nome)} <span class="note" style="margin:0">${dataBR(l.fechada||l.criada)}</span></span><span class="note" style="margin:0">${its.length} itens${f?` · ${f} faltaram`:""}${o?` · ${o} em outro mercado`:""} <a href="#" onclick="CP.reabrirLista('${A(l.id)}');return false">reabrir</a></span></div>`;}).join("")}</div>`:""}`;}
+    return `<div class="flexbet cp-lin"><span>${esc(l.nome)} <span class="note" style="margin:0">${dataBR(l.fechada||l.criada)}</span></span><span class="note" style="margin:0">${l.arquivada&&!its.length?"arquivada (itens apagados)":its.length+" itens"}${f?` · ${f} faltaram`:""}${o?` · ${o} em outro mercado`:""} <a href="#" onclick="CP.reabrirLista('${A(l.id)}');return false">reabrir</a></span></div>`;}).join("")}</div>`:""}`;}
 CP.apagarCompra=function(id){if(!confirm("Apagar esta compra do histórico?"))return;CP.apagar("compras",id);CP.precisaAnos=true;CP.gravar();CP.render();};
 CP.reabrirLista=function(id){const l=CP.por("listas",id);if(!l)return;l.status="aberta";CP.salvarReg("listas",l);CP.gravar();ui.lista=id;CP.irAba("lista");};
 
@@ -6119,14 +6262,30 @@ CP.mercadoAqui=async function(id){const m=CP.por("mercados",id);if(!m)return;
 
 // ---------- AJUSTES ----------
 // quem usa a conta e em que versão (lido das finanças: state._aparelhos, só leitura) — para saber como está o app da outra pessoa
-function blocoAparelhos(){let aps=[];try{aps=Object.entries(state._aparelhos||{}).filter(([,a])=>a&&typeof a==="object").sort((a,b)=>(+b[1].visto||0)-(+a[1].visto||0));}catch(e){}
+function blocoAparelhos(){let aps=[];try{Object.entries(state._aparelhos||{}).forEach(([id,a])=>{if(a&&typeof a==="object")aps.push({id,nome:String(a.nome||"?"),versao:String(a.versao||""),visto:+a.visto||0});});}catch(e){}
+  // nome que a pessoa escolheu na Lista (guardado na própria Lista; as finanças só são LIDAS aqui)
+  try{CP.aparelhosLista().forEach(l=>{const x=aps.find(a=>a.id===l.id);
+    if(x){x.nomeLista=l.nome;if(l.visto>x.visto){x.visto=l.visto;if(l.versao)x.versao=l.versao;}else if(!x.versao)x.versao=l.versao;}
+    else aps.push({id:l.id,nome:l.nome||"?",nomeLista:l.nome,versao:l.versao,visto:l.visto});});}catch(e){}
+  aps.sort((a,b)=>b.visto-a.visto);
   if(!aps.length)return"";let meu="";try{meu=CP.eu().id;}catch(e){}
   return `<div class="card"><h3>📱 Aparelhos da família</h3><p class="note" style="margin-top:0">Quem já abriu o app com a conta conectada e em qual versão está. Versão em vermelho: está desatualizada — feche e abra o app nesse aparelho.</p>
-    <div style="overflow-x:auto"><table><tr><th>Aparelho</th><th>Versão</th><th>Última vez</th></tr>${aps.map(([id,a])=>{let velho=false;try{velho=cmpVersao(a.versao||"",APP_VERSAO_TXT)<0;}catch(e){}
-      return `<tr><td>${esc(a.nome||"?")}${id===meu?' <span class="pill teal">este</span>':""}</td><td${velho?' style="color:#be123c;font-weight:700"':""}>${esc(a.versao||"?")}</td><td>${a.visto?esc(new Date(+a.visto).toLocaleString("pt-BR")):"—"}</td></tr>`;}).join("")}</table></div></div>`;}
+    <div style="overflow-x:auto"><table><tr><th>Aparelho</th><th>Versão</th><th>Última vez</th></tr>${aps.map(a=>{let velho=false;try{velho=!!a.versao&&cmpVersao(a.versao,APP_VERSAO_TXT)<0;}catch(e){}
+      const nm=a.nomeLista?esc(a.nomeLista)+(a.nome&&a.nome!==a.nomeLista&&a.nome!=="?"?` <span class="note" style="margin:0">(${esc(a.nome)})</span>`:""):esc(a.nome);
+      return `<tr><td>${nm}${a.id===meu?' <span class="pill teal">este</span>':""}</td><td${velho?' style="color:#be123c;font-weight:700"':""}>${esc(a.versao||"?")}</td><td>${a.visto?esc(new Date(+a.visto).toLocaleString("pt-BR")):"—"}</td></tr>`;}).join("")}</table></div></div>`;}
+CP.blocoAparelhos=blocoAparelhos;
 function blocoMemoria(){const t=CP.tamanho(),pct=Math.min(100,Math.round(t.total/t.limite*100));
   return `<div class="card"><h3>💾 Memória deste aparelho</h3><p class="note" style="margin-top:0">O navegador guarda tudo (finanças e compras) no mesmo espaço, de cerca de 5 milhões de caracteres. Usado: <b>${pct}%</b> (as compras ocupam ${Math.round(t.compras/1000)} mil).${pct>=70?' <b style="color:#be123c">Está ficando cheio: exporte um backup abaixo.</b>':""}</p>
     <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Memória usada"><div style="width:${pct}%;${pct>=70?"background:var(--rose)":""}"></div></div></div>`;}
+// listas fechadas há mais de 60 dias: arquivar apaga só os ITENS delas (a lista, as compras e o histórico de preços ficam como estão)
+const DIAS_ARQ=60;
+function blocoArquivar(){let p={listas:0,itens:0,liberado:0};try{p=CP.previaArquivar(DIAS_ARQ);}catch(e){}
+  const kb=v=>CP.fmtNum(v/1000,1)+" KB";
+  return `<div class="card"><h3>🗄 Arquivar listas antigas</h3><p class="note" style="margin-top:0">Listas já fechadas guardam os itens para sempre e isso pesa na memória e na sincronização. Arquivar apaga <b>só os itens</b> das listas fechadas há mais de ${DIAS_ARQ} dias; a lista, as compras e o histórico de preços continuam iguais.</p>
+    ${p.itens?`<p class="note">Agora: <b>${CP.fmtNum(p.listas,0)}</b> lista(s) com <b>${CP.fmtNum(p.itens,0)}</b> iten(s) — libera cerca de <b>${kb(p.liberado)}</b>.</p><button class="btn" onclick="CP.arquivarListasTela()">Arquivar listas antigas (mais de ${DIAS_ARQ} dias)</button>`:`<p class="note">Nenhuma lista fechada há mais de ${DIAS_ARQ} dias com itens: nada para arquivar.</p>`}</div>`;}
+CP.arquivarListasTela=function(){const p=CP.previaArquivar(DIAS_ARQ);if(!p.itens){CP.render();return;}
+  if(!confirm(`Arquivar ${CP.fmtNum(p.listas,0)} lista(s) fechada(s) há mais de ${DIAS_ARQ} dias?\n\nOs ${CP.fmtNum(p.itens,0)} itens delas serão apagados${CP.syncAtivo()?" aqui e nos outros aparelhos da família":""}. A lista, as compras e o histórico de preços continuam como estão. Libera cerca de ${CP.fmtNum(p.liberado/1000,1)} KB.`))return;
+  try{const r=CP.arquivarListas(DIAS_ARQ);alert(`✔ Arquivado: ${CP.fmtNum(r.listas,0)} lista(s), ${CP.fmtNum(r.itens,0)} iten(s). Espaço liberado: cerca de ${CP.fmtNum(r.liberado/1000,1)} KB.`);}catch(e){alert(e.message);}CP.render();};
 function telaAjustes(){const c=CP.config(),eu=CP.eu(),log=CP.log().slice().reverse().slice(0,15),bk=CP.backups().slice().reverse();
   return blocoAparelhos()+blocoMemoria()+`<div class="card"><h3>Você neste aparelho</h3><div class="row"><input id="cpEu" value="${esc(eu.nome)}" placeholder="seu nome (aparece em “pegou”)"><button class="btn primary" onclick="CP.definirEu(document.getElementById('cpEu').value);CP.render()">Salvar</button></div>
     <p class="note">Fica só neste aparelho; os outros veem esse nome quando você marca um item.</p></div>
@@ -6147,6 +6306,7 @@ function telaAjustes(){const c=CP.config(),eu=CP.eu(),log=CP.log().slice().rever
     ${CP.sync.status==="erro"?`<p class="note" style="color:#be123c">⚠ ${esc(CP.sync.msg)}</p>`:""}
     ${CP.syncAtivo()?`<button class="btn" onclick="CP.sincronizar().then(CP.render)">Sincronizar agora</button>`:""}
     ${log.length?`<details style="margin-top:8px"><summary class="note">🔎 últimos eventos</summary><div class="note">${log.map(x=>new Date(x.t).toLocaleString("pt-BR")+" · "+esc(x.ev)).join("<br>")}</div></details>`:""}</div>
+  ${blocoArquivar()}
   <div class="card"><h3>Backup das compras</h3><div class="row"><button class="btn" onclick="CP.baixarBackup()">⬇️ Exportar (.json)</button>
     <label class="btn">⬆️ Importar (juntar)<input type="file" accept=".json,application/json" style="display:none" onchange="CP.subirBackup(this,false)"></label>
     <label class="btn danger">Importar substituindo<input type="file" accept=".json,application/json" style="display:none" onchange="CP.subirBackup(this,true)"></label></div>
@@ -6157,8 +6317,13 @@ CP.testarWorker=async function(){CP.salvarWorker();if(!CP.temIntermediario())ret
   try{const r=await CP.viaIntermediario("https://www.savegnago.com.br/api/catalog_system/pub/products/search?ft=arroz&_from=0&_to=0");const j=JSON.parse(r.texto);alert(Array.isArray(j)?"✔ Intermediário funcionando.":"Respondeu, mas não como esperado.");}
   catch(e){alert("✖ "+e.message);}};
 CP.baixarBackup=function(){const b=new Blob([CP.exportar()],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="compras-"+CP.hoje()+".json";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);};
-CP.subirBackup=function(inp,subst){const f=inp.files&&inp.files[0];if(!f)return;if(subst&&!confirm("Substituir TODAS as compras deste aparelho (e da nuvem) por este arquivo?"))return;
-  const r=new FileReader();r.onload=()=>{try{CP.importar(r.result,subst);CP.precisaAnos=true;CP.gravar();alert("✔ Importado.");CP.render();}catch(e){alert(e.message);}};r.readAsText(f);};
+CP.subirBackup=function(inp,subst){const f=inp.files&&inp.files[0];if(!f)return;
+  if(subst&&!confirm("Substituir TUDO pelo conteúdo deste arquivo?\n\nLista, itens, compras, produtos e mercados que NÃO estiverem no arquivo serão APAGADOS aqui"+(CP.syncAtivo()?" e, ao sincronizar, nos outros aparelhos da família (a conta está ligada)":"")+". Cartões de VR, ajustes e nomes dos aparelhos não mudam.\n\nA cópia automática de hoje (Ajustes → Backup) guarda como estava ao abrir o app. Continuar?"))return;
+  const r=new FileReader();r.onload=async()=>{try{
+    if(subst&&CP.syncAtivo()){try{await CP.sincronizar();}catch(e){}} // antes de substituir, recebe o que os outros aparelhos já têm (senão voltaria depois)
+    const res=CP.importar(r.result,subst);CP.precisaAnos=true;CP.gravar();
+    alert("✔ Importado."+(subst?" "+(res.apagados?CP.fmtNum(res.apagados,0)+" registro(s) que não estavam no arquivo foram apagados.":"Nada precisou ser apagado.")+(CP.syncAtivo()&&CP.sync.status!=="ok"?" Sem sinal agora: o que outro aparelho criou e este ainda não recebeu pode voltar.":""):""));
+    CP.render();}catch(e){alert(e.message);}};r.readAsText(f);};
 CP.restaurarAuto=function(dia){const b=CP.backups().find(x=>x.dia===dia);if(!b||!confirm("Juntar com a cópia de "+dataBR(dia)+"? (nada é apagado)"))return;
   try{CP.importar(JSON.stringify({tipo:"compras-familia",dados:JSON.parse(b.dados)}),false);CP.precisaAnos=true;CP.gravar();CP.render();}catch(e){alert(e.message);}};
 
