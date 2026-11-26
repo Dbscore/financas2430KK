@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-11";
+const APP_VERSAO_TXT="2026.11.26-12";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4510,7 +4510,7 @@ input.sem-preco{border-color:var(--rose)!important;}
   #cpApp table.tb-cards td:first-child{display:block;text-align:left;font-size:15px;}
   #cpApp table.tb-cards td[data-l]::before{content:attr(data-l);color:var(--mut);font-size:12px;text-align:left;}
 }
-.bp-busca{display:flex;gap:6px;} .bp-busca #bpTermo,.bp-busca #bpEnd{flex:1;min-width:0;}
+.bp-busca{display:flex;flex-wrap:wrap;gap:6px;} .bp-busca #bpTermo,.bp-busca #bpEnd{flex:1;min-width:0;} .bp-busca #bpTermo{flex:1 1 100%;} .bp-busca #bpBuscar,.bp-busca #bpLimpar{flex:1 1 40%;}
 .bp-cand{padding:6px 0;}
 .bp-h{font-size:16px;margin:0 0 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;} .bp-n{display:inline-block;background:var(--card2);border:1px solid var(--borda3);border-radius:12px;padding:2px 8px;font-size:12px;font-weight:700;}
 .bp-opcao{display:block;width:100%;text-align:left;min-height:44px;margin:6px 0;white-space:normal;} .btn[disabled]{opacity:.55;cursor:not-allowed;}
@@ -7124,7 +7124,7 @@ BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(v
   const termo=(val("bpTermo")||st.termo).trim();st.termo=termo;st.desamb=null;st.sugestao=null;st.refina=null;st.escolha="";
   if(!CP.temIntermediario())return BP.buscar();
   st.catFiltro=null;
-  const memo=BP.memoDes(termo);if(memo){st.refina=memo.t?{t:memo.t,rot:memo.rot}:null;st.catFiltro=memo.cat&&memo.cat.k?memo.cat:null;st.escolha=memo.t?"refinada":(st.catFiltro?"categoria":"exata");return BP.buscar();}
+  const memo=null;if(memo){st.refina=memo.t?{t:memo.t,rot:memo.rot}:null;st.catFiltro=memo.cat&&memo.cat.k?memo.cat:null;st.escolha=memo.t?"refinada":(st.catFiltro?"categoria":"exata");return BP.buscar();}
   const id=++desId;st.desambBusy=true;BP.atualizarDes();let d=null;
   try{d=await analisar(termo);}catch(e){d=null;}
   if(id!==desId)return;st.desambBusy=false;
@@ -7475,16 +7475,16 @@ function desambHtml(){
   if(st.sugestao){const s=st.sugestao;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Não achei “${esc(s.de)}”.</b> Você quis dizer “${esc(s.para)}”?</p>
     <button id="bpDesPrim" class="btn primary bp-opcao" onclick="BP.aceitarSugestao()">✔ Sim, buscar “${esc(s.para)}”</button>
     <button class="btn bp-opcao" onclick="BP.buscarAssimMesmo()">Buscar “${esc(s.de)}” assim mesmo</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
-  if(st.desamb){const d=st.desamb;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Encontrei mais de uma coisa para “${esc(d.termo)}”.</b> Tem preferência ou quer ver tudo?</p>
-    ${(d.categorias||[]).length>=2?`<p class="note" style="margin:6px 0 2px">Por categoria:</p>${d.categorias.map((c,i)=>`<button class="btn bp-opcao" onclick="BP.escolherCategoria(${i})"><span aria-hidden="true">${c.ic}</span> <b>${esc(c.r)}</b> — ${CP.fmtNum(c.n,0)} ${c.n===1?"produto":"produtos"}</button>`).join("")}<p class="note" style="margin:6px 0 2px">Ou por nome:</p>`:""}
-    ${d.grupos.map((g,i)=>`<button ${i===0?'id="bpDesPrim" ':""}class="btn bp-opcao" onclick="BP.escolherGrupo(${i})"><span aria-hidden="true">${g.ic}</span> <b>${esc(g.rot)}</b> — ${CP.fmtNum(g.n,0)} ${g.n===1?"produto":"produtos"}${g.dept?" ("+esc(g.dept)+")":""}${g.barata?' <span class="pill teal">🏆 mais barata</span>':""}${g.cara?' <span class="pill rose">💸 mais cara</span>':""}${g.pmin>0?`<span class="note" style="display:block;margin:0">${g.pmin===g.pmax?F(g.pmin):"de "+F(g.pmin)+" a "+F(g.pmax)}${g.base&&g.bmin>0?" · "+F(g.bmin)+(g.bmax>g.bmin?" a "+F(g.bmax):"")+"/"+esc(g.base):""}</span>`:""}<span class="note" style="display:block;margin:0">ex.: ${esc(g.ex)}</span></button>`).join("")}
+  if(st.desamb){const d=st.desamb,mm=BP.memoDes(d.termo)||{},ult='<span class="pill">⭐ sua última escolha</span>';return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Encontrei mais de uma coisa para “${esc(d.termo)}”.</b> Tem preferência ou quer ver tudo?</p>
+    ${(d.categorias||[]).length>=2?`<p class="note" style="margin:6px 0 2px">Por categoria:</p>${d.categorias.map((c,i)=>`<button class="btn bp-opcao" onclick="BP.escolherCategoria(${i})"><span aria-hidden="true">${c.ic}</span> <b>${esc(c.r)}</b> — ${CP.fmtNum(c.n,0)} ${c.n===1?"produto":"produtos"}${mm.cat&&mm.cat.k===c.k?" "+ult:""}</button>`).join("")}<p class="note" style="margin:6px 0 2px">Ou por nome:</p>`:""}
+    ${d.grupos.map((g,i)=>`<button ${i===0?'id="bpDesPrim" ':""}class="btn bp-opcao" onclick="BP.escolherGrupo(${i})"><span aria-hidden="true">${g.ic}</span> <b>${esc(g.rot)}</b> — ${CP.fmtNum(g.n,0)} ${g.n===1?"produto":"produtos"}${g.dept?" ("+esc(g.dept)+")":""}${mm.t&&mm.t===g.termo?" "+ult:""}${g.barata?' <span class="pill teal">🏆 mais barata</span>':""}${g.cara?' <span class="pill rose">💸 mais cara</span>':""}${g.pmin>0?`<span class="note" style="display:block;margin:0">${g.pmin===g.pmax?F(g.pmin):"de "+F(g.pmin)+" a "+F(g.pmax)}${g.base&&g.bmin>0?" · "+F(g.bmin)+(g.bmax>g.bmin?" a "+F(g.bmax):"")+"/"+esc(g.base):""}</span>`:""}<span class="note" style="display:block;margin:0">ex.: ${esc(g.ex)}</span></button>`).join("")}
     <button class="btn bp-opcao" onclick="BP.nenhumaDessas()">👀 Ver tudo de “${esc(d.termo)}” (sem escolher)</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
   return"";}
 BP.atualizarDes=function(){try{const e=$("bpDesBox");if(e)e.innerHTML=desambHtml();const b=$("bpBuscar");if(b){const p=BP.podeBuscar();b.disabled=!p.ok||!!st.desambBusy;}}catch(x){}};
 function passo2Html(){const cfg=CP.config(),ck=CP.custoKmUsado(),p=BP.podeBuscar();
   return`<div class="card bp-passo" id="bpPasso2"><h2 class="bp-h"><span class="bp-n">2 de 3</span>O que você quer comprar?</h2>
     <div class="bp-busca"><input id="bpTermo" value="${esc(st.termo)}" oninput="BP.passoDig(this.value)" placeholder="ex.: arroz 5kg" aria-label="produto" aria-describedby="bpPorque" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.iniciarBusca()">
-      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button id="bpBuscar" class="btn primary" ${p.ok&&!st.desambBusy?"":"disabled"} onclick="BP.iniciarBusca()">🔎 Buscar</button><button class="btn" aria-label="Limpar a busca" onclick="BP.limparBusca()">🧹 Limpar</button></div>
+      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button id="bpBuscar" class="btn primary" ${p.ok&&!st.desambBusy?"":"disabled"} onclick="BP.iniciarBusca()">🔎 Buscar</button><button id="bpLimpar" class="btn" aria-label="Limpar a busca" onclick="BP.limparBusca()">🧹 Limpar</button></div>
     <p class="note" id="bpPorque" role="status" aria-live="polite" style="margin:6px 0 0">${esc(p.motivo)}</p>
     <div id="bpDesBox">${desambHtml()}</div>
     <p class="note" style="margin:6px 0 0">Busca por texto livre, de um produto só (não usa a sua lista): escreva produto, marca e, se quiser, o tamanho (ex.: “cerveja Heineken 350 ml”, “arroz 5 kg”). Os resultados mostram os tamanhos achados (269 ml, 350 ml, 1 L…): toque num deles para comparar só aquela embalagem entre os mercados.</p>
