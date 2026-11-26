@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-8";
+const APP_VERSAO_TXT="2026.11.26-9";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -7062,7 +7062,7 @@ const CH_DES=KEY+"__busca_desamb";
 function lerDes(){try{const c=JSON.parse(localStorage.getItem(CH_DES)||"{}");return c&&typeof c==="object"&&!Array.isArray(c)?c:{};}catch(e){return{};}}
 function gravarDes(c){const ks=Object.keys(c);if(ks.length>40)ks.sort((a,b)=>(c[a].em||0)-(c[b].em||0)).slice(0,ks.length-40).forEach(k=>delete c[k]);try{localStorage.setItem(CH_DES,JSON.stringify(c));}catch(e){}}
 BP.memoDes=termo=>{const e=lerDes()[CP.norm(termo)];return e&&typeof e==="object"&&Date.now()-(+e.em||0)<30*86400000?e:null;};
-const guardarDes=(termo,t,rot)=>{const c=lerDes();c[CP.norm(termo)]={t:t||"",rot:String(rot||"").slice(0,60),em:Date.now()};gravarDes(c);};
+const guardarDes=(termo,t,rot,cat)=>{const c=lerDes();c[CP.norm(termo)]={t:t||"",rot:String(rot||"").slice(0,60),em:Date.now()};if(cat&&cat.k)c[CP.norm(termo)].cat={k:String(cat.k).slice(0,60),r:String(cat.r||"").slice(0,60)};gravarDes(c);};
 const toks=s=>CP.norm(s).replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(Boolean);
 const SOBRA=/^(\d+([.,]\d+)?(ml|l|lt|lts|kg|g|gr|grs|un|und|unid|x|c|cx|pcs|pct)?|ml|l|lt|kg|g|gr|un|und|unid|unidade|unidades|lata|latas|garrafa|garrafas|pet|pack|fardo|caixa|cx|com|de|da|do|dos|das|e|para|pct|pacote|long|neck|sleeve)$/;
 const titulo=s=>String(s).replace(/\S+/g,w=>w.charAt(0).toUpperCase()+w.slice(1));
@@ -7075,12 +7075,22 @@ BP.agruparLinhas=function(lista,termo){const q=new Set(toks(termo)),G={};let tot
     if(!ch.length){const i=t.findIndex(w=>q.has(w));const dep=t.slice(i+1).filter(ok);ch=(dep.length?dep:t.filter(ok)).slice(0,2);}
     if(!ch.length)return;const k=ch.join(" ");const sec=CP.secaoDe(o.nome);
     const dp=o.cat?{k:CP.norm(o.cat),r:o.cat}:(sec!=="Outros"?{k:CP.norm(sec),r:sec}:null);
-    const g=G[k]||(G[k]={k,n:0,redes:new Set(),ex:o.nome,deps:{}});g.n++;g.redes.add(o.rede||"");if(dp){const d=g.deps[dp.k]||(g.deps[dp.k]={r:dp.r,n:0});d.n++;}});
-  const gs=Object.values(G).map(g=>{const d=Object.values(g.deps).sort((a,b)=>b.n-a.n)[0];return{k:g.k,n:g.n,mercados:g.redes.size,ex:g.ex,dept:d?d.r:"",deptK:d?CP.norm(d.r):""};})
+    const g=G[k]||(G[k]={k,n:0,redes:new Set(),ex:o.nome,deps:{},pmin:Infinity,pmax:0,bmin:Infinity,bmax:0,base:null,bOk:true});g.n++;g.redes.add(o.rede||"");
+    if(+o.preco>0){g.pmin=Math.min(g.pmin,+o.preco);g.pmax=Math.max(g.pmax,+o.preco);}
+    if(+o.porBase>0&&o.base){if(g.base&&g.base!==o.base)g.bOk=false;g.base=g.base||o.base;g.bmin=Math.min(g.bmin,+o.porBase);g.bmax=Math.max(g.bmax,+o.porBase);}else g.bOk=false;if(dp){const d=g.deps[dp.k]||(g.deps[dp.k]={r:dp.r,n:0});d.n++;}});
+  const gs=Object.values(G).map(g=>{const d=Object.values(g.deps).sort((a,b)=>b.n-a.n)[0];return{k:g.k,n:g.n,mercados:g.redes.size,ex:g.ex,dept:d?d.r:"",deptK:d?CP.norm(d.r):"",pmin:isFinite(g.pmin)?CP.r2(g.pmin):0,pmax:CP.r2(g.pmax),base:g.bOk&&g.base&&isFinite(g.bmin)?g.base:"",bmin:g.bOk&&isFinite(g.bmin)?CP.r2(g.bmin):0,bmax:g.bOk?CP.r2(g.bmax):0};})
     .filter(g=>g.n>=2||(total&&g.n/total>=.2)).sort((a,b)=>b.n-a.n||b.mercados-a.mercados||a.deptK.localeCompare(b.deptK)||a.k.localeCompare(b.k)).slice(0,5);
   const depts=new Set(gs.map(g=>g.deptK).filter(Boolean));
   gs.forEach(g=>{g.termo=(String(termo).trim()+" "+g.k).replace(/\s+/g," ");g.rot=titulo(g.termo);g.ic=icDept(g.dept);});
-  return{grupos:gs,total,ambiguo:gs.length>=2&&depts.size>=2};};
+  // "qual é a mais barata e a mais cara": por preço da medida (kg/L) quando todas as linhas têm a mesma, senão pelo menor preço de etiqueta
+  const comMed=gs.length>1&&gs.every(g=>g.base&&g.base===gs[0].base&&g.bmin>0),chave=g=>comMed?g.bmin:g.pmin;
+  const val=gs.filter(g=>chave(g)>0).sort((a,b)=>chave(a)-chave(b));if(val.length>=2){val[0].barata=true;val[val.length-1].cara=true;}
+  // categorias (departamentos) dos produtos achados: botões "por categoria" quando há 2+ com peso (ex.: Flowers = Bebidas × Limpeza)
+  const D={};(lista||[]).forEach(o=>{if(!o||!o.nome)return;const sec=CP.secaoDe(o.nome),r=o.cat||(sec!=="Outros"?sec:"");if(!r)return;const k=CP.norm(r);const d=D[k]||(D[k]={k,r,n:0});d.n++;});
+  const cats=Object.values(D).filter(d=>d.n>=2||(total&&d.n/total>=.2)).sort((a,b)=>b.n-a.n).slice(0,5);cats.forEach(c=>{c.ic=icDept(c.r);});
+  // pergunta quando há 2+ linhas/marcas e NENHUMA domina (≥75% dos produtos agrupados) — "cerveja" sem marca — ou quando as linhas caem em categorias diferentes ("flowers")
+  const soma=gs.reduce((s,g)=>s+g.n,0),topo=gs.length?gs[0].n:0,dominante=soma>0&&topo/soma>=.75;
+  return{grupos:gs,categorias:cats.length>=2?cats:[],total,ambiguo:gs.length>=2&&(depts.size>=2||!dominante)||cats.length>=2&&gs.length>=1};};
 const lev=(a,b)=>{const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i]);for(let j=1;j<=n;j++)d[0][j]=j;
   for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n];};
 // correção simples de digitação: troca a palavra que ninguém conhece pela mais parecida (≤2 letras de diferença) entre as palavras do que o site devolveu e do seu histórico
@@ -7102,19 +7112,21 @@ async function analisar(termo){const sites=sitesAtivos(),vt=Object.keys(sites).f
   try{lista=await Promise.race([buscarSite(rede,termo),new Promise((_,no)=>{tm=setTimeout(()=>{const x=new Error("demorou");x.tempo=true;no(x);},BP.limiteMercadoMs);})]);}finally{clearTimeout(tm);}
   latRede[rede]=Date.now()-t0;
   if(!lista.length){const desc=(lerCache()[k(rede)]||{}).desc||[];const s=BP.sugerir(termo,desc);return s?{sugestao:{de:termo,para:s}}:null;}
-  const g=BP.agruparLinhas(lista,termo);return g.ambiguo?{grupos:g.grupos}:null;}
+  const g=BP.agruparLinhas(lista,termo);return g.ambiguo?{grupos:g.grupos,categorias:g.categorias||[]}:null;}
 let desId=0;
 BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(val("bpTermo"));return;}
   const termo=(val("bpTermo")||st.termo).trim();st.termo=termo;st.desamb=null;st.sugestao=null;st.refina=null;st.escolha="";
   if(!CP.temIntermediario())return BP.buscar();
-  const memo=BP.memoDes(termo);if(memo){st.refina=memo.t?{t:memo.t,rot:memo.rot}:null;st.escolha=memo.t?"refinada":"exata";return BP.buscar();}
+  st.catFiltro=null;
+  const memo=BP.memoDes(termo);if(memo){st.refina=memo.t?{t:memo.t,rot:memo.rot}:null;st.catFiltro=memo.cat&&memo.cat.k?memo.cat:null;st.escolha=memo.t?"refinada":(st.catFiltro?"categoria":"exata");return BP.buscar();}
   const id=++desId;st.desambBusy=true;BP.atualizarDes();let d=null;
   try{d=await analisar(termo);}catch(e){d=null;}
   if(id!==desId)return;st.desambBusy=false;
   if(d&&d.sugestao){st.sugestao=d.sugestao;BP.atualizarDes();BP.foco("bpDesPrim");return;}
-  if(d&&d.grupos){st.desamb={termo,grupos:d.grupos};BP.atualizarDes();BP.foco("bpDesPrim");return;}
+  if(d&&d.grupos){st.desamb={termo,grupos:d.grupos,categorias:d.categorias||[]};BP.atualizarDes();BP.foco("bpDesPrim");return;}
   BP.atualizarDes();return BP.buscar();};
 BP.escolherGrupo=function(i){const g=st.desamb&&st.desamb.grupos[i];if(!g)return;guardarDes(st.desamb.termo,g.termo,g.rot);st.refina={t:g.termo,rot:g.rot};st.escolha="refinada";desId++;return BP.buscar();};
+BP.escolherCategoria=function(i){const c=st.desamb&&st.desamb.categorias&&st.desamb.categorias[i];if(!c)return;guardarDes(st.desamb.termo,"","",c);st.refina=null;st.catFiltro={k:c.k,r:c.r};st.escolha="categoria";desId++;return BP.buscar();};
 BP.nenhumaDessas=function(){const t=st.desamb?st.desamb.termo:st.termo;guardarDes(t,"","");st.refina=null;st.escolha="exata";desId++;return BP.buscar();};
 BP.digitarDeNovo=function(){desId++;st.desamb=null;st.sugestao=null;st.desambBusy=false;BP.atualizarDes();BP.foco("bpTermo");};
 BP.aceitarSugestao=function(){const s=st.sugestao;if(!s)return;st.termo=s.para;const e=$("bpTermo");if(e)e.value=s.para;st.sugestao=null;return BP.iniciarBusca();};
@@ -7146,6 +7158,7 @@ BP.buscar=async function(){const termo=(($("bpTermo")||{}).value||st.termo).trim
   const recalc=()=>{if(id!==buscaId)return;const lojas=lojasPorRede(),cfg=cfgDesloc();
     const dentro=redesNoRaio(todas,lojas,cfg.raioKm),fora=todas.filter(x=>!dentro.includes(x));
     let site=[];const cons={};dentro.forEach(r=>{if(porRede[r])site=site.concat(porRede[r]);if(consultas[r])cons[r]=consultas[r];});
+    if(st.catFiltro&&st.catFiltro.k)site=site.filter(o=>{const sec=CP.secaoDe(o.nome);return CP.norm(o.cat||(sec!=="Outros"?sec:""))===st.catFiltro.k;});
     const hist=doHistorico(tb),of=site.concat(hist);of.forEach(o=>{delete o.selo;});BP.ranquear(of,st.qtd,lojas,cfg);
     const vs=Object.values(cons);
     Object.assign(st.res,{todas:of,ofertas:of,total:of.length,redes:dentro,n:vs.length,pend:vs.filter(c=>c.buscando).length,lento:vs.filter(c=>c.lento).length,mapaPend:!!(mapaP&&!mapaOk),
@@ -7454,9 +7467,10 @@ function desambHtml(){
   if(st.sugestao){const s=st.sugestao;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Não achei “${esc(s.de)}”.</b> Você quis dizer “${esc(s.para)}”?</p>
     <button id="bpDesPrim" class="btn primary bp-opcao" onclick="BP.aceitarSugestao()">✔ Sim, buscar “${esc(s.para)}”</button>
     <button class="btn bp-opcao" onclick="BP.buscarAssimMesmo()">Buscar “${esc(s.de)}” assim mesmo</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
-  if(st.desamb){const d=st.desamb;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>“${esc(d.termo)}” pode ser mais de uma coisa.</b> Qual você quer?</p>
-    ${d.grupos.map((g,i)=>`<button ${i===0?'id="bpDesPrim" ':""}class="btn bp-opcao" onclick="BP.escolherGrupo(${i})"><span aria-hidden="true">${g.ic}</span> <b>${esc(g.rot)}</b> — ${CP.fmtNum(g.n,0)} ${g.n===1?"produto":"produtos"}${g.dept?" ("+esc(g.dept)+")":""}<span class="note" style="display:block;margin:0">ex.: ${esc(g.ex)}</span></button>`).join("")}
-    <button class="btn bp-opcao" onclick="BP.nenhumaDessas()">Nenhuma dessas — buscar exatamente “${esc(d.termo)}”</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
+  if(st.desamb){const d=st.desamb;return`<div id="bpDesamb" role="group" aria-labelledby="bpDesT" style="margin-top:8px"><p id="bpDesT" role="status" style="margin:0 0 4px"><b>Encontrei mais de uma coisa para “${esc(d.termo)}”.</b> Tem preferência ou quer ver tudo?</p>
+    ${(d.categorias||[]).length>=2?`<p class="note" style="margin:6px 0 2px">Por categoria:</p>${d.categorias.map((c,i)=>`<button class="btn bp-opcao" onclick="BP.escolherCategoria(${i})"><span aria-hidden="true">${c.ic}</span> <b>${esc(c.r)}</b> — ${CP.fmtNum(c.n,0)} ${c.n===1?"produto":"produtos"}</button>`).join("")}<p class="note" style="margin:6px 0 2px">Ou por nome:</p>`:""}
+    ${d.grupos.map((g,i)=>`<button ${i===0?'id="bpDesPrim" ':""}class="btn bp-opcao" onclick="BP.escolherGrupo(${i})"><span aria-hidden="true">${g.ic}</span> <b>${esc(g.rot)}</b> — ${CP.fmtNum(g.n,0)} ${g.n===1?"produto":"produtos"}${g.dept?" ("+esc(g.dept)+")":""}${g.barata?' <span class="pill teal">🏆 mais barata</span>':""}${g.cara?' <span class="pill rose">💸 mais cara</span>':""}${g.pmin>0?`<span class="note" style="display:block;margin:0">${g.pmin===g.pmax?F(g.pmin):"de "+F(g.pmin)+" a "+F(g.pmax)}${g.base&&g.bmin>0?" · "+F(g.bmin)+(g.bmax>g.bmin?" a "+F(g.bmax):"")+"/"+esc(g.base):""}</span>`:""}<span class="note" style="display:block;margin:0">ex.: ${esc(g.ex)}</span></button>`).join("")}
+    <button class="btn bp-opcao" onclick="BP.nenhumaDessas()">👀 Ver tudo de “${esc(d.termo)}” (sem escolher)</button><button class="btn bp-opcao" onclick="BP.digitarDeNovo()">✏️ Digitar de novo</button></div>`;}
   return"";}
 BP.atualizarDes=function(){try{const e=$("bpDesBox");if(e)e.innerHTML=desambHtml();const b=$("bpBuscar");if(b){const p=BP.podeBuscar();b.disabled=!p.ok||!!st.desambBusy;}}catch(x){}};
 function passo2Html(){const cfg=CP.config(),ck=CP.custoKmUsado(),p=BP.podeBuscar();
