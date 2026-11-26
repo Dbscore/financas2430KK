@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-3";
+const APP_VERSAO_TXT="2026.11.26-4";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -6627,8 +6627,9 @@ const CH_POS=KEY+"__busca_pos",CH_OSM=KEY+"__busca_osm",CH_CACHE=KEY+"__busca_ca
 try{const p=JSON.parse(localStorage.getItem(CH_POS)||"null");if(p&&typeof p==="object"&&Number.isFinite(p.lat)&&Number.isFinite(p.lon)&&Math.abs(p.lat)<=90&&Math.abs(p.lon)<=180&&Date.now()-(+p.em||0)<(p.fonte==="endereco"?24:6)*3600000){st.pos=p;if(p.fonte==="endereco")st.lugar=String(p.lugar||"").slice(0,100);}}catch(e){}
 // sites com catálogo público (VTEX). Só estes endereços passam pelo intermediário.
 // (Carrefour também é VTEX, mas o site recusa consultas automáticas — 503 em 2026-11 — então fica só como link)
-const SITES={"Savegnago":"https://www.savegnago.com.br","Atacadão":"https://www.atacadao.com.br"};
-const SITES_SEM_API={"Carrefour":"https://mercado.carrefour.com.br","Tenda":"https://www.tendaatacado.com.br"};
+// Tenda Atacado: não é VTEX; a página de busca traz os produtos dentro de <script id="__NEXT_DATA__"> (lida por BP.lerTenda)
+const SITES={"Savegnago":"https://www.savegnago.com.br","Atacadão":"https://www.atacadao.com.br","Tenda":"https://www.tendaatacado.com.br"};
+const SITES_SEM_API={"Carrefour":"https://mercado.carrefour.com.br"};
 BP.SITES=SITES;
 // sites com consulta de preço = os fixos + os mercados que a família cadastrou (mk-…) e que passaram no teste; os demais viram só link
 const TEM=CP.TEM;
@@ -6649,7 +6650,7 @@ BP.erroCurto=function(e){const m=String((e&&e.message)||e||"");let st=e&&e.statu
   if((e&&e.sem)||/Failed to fetch|NetworkError|Load failed|sem conex|falar com o intermedi/i.test(m))return"sem conexão com o intermediário";
   if(/resposta inesperada/i.test(m))return"o site respondeu algo que o app não entendeu";
   return m.replace(/^Error:\s*/,"").slice(0,80)||"erro desconhecido";};
-const IMG_OK=/^https:\/\/[a-z0-9.-]+\.(vteximg\.com\.br|vtexassets\.com)\//i;
+const IMG_OK=/^https:\/\/([a-z0-9.-]+\.(vteximg\.com\.br|vtexassets\.com)|d3gdr9n5lqb5z7\.cloudfront\.net)\//i;
 const r3=v=>Math.round(v*1000)/1000;
 // distância em km (haversine)
 BP.km=function(a,b){if(!a||!b||a.lat==null||b.lat==null)return null;const R=6371,rad=x=>x*Math.PI/180;
@@ -6796,9 +6797,29 @@ BP.lerVtex=function(json,rede,base,termo){const out=[];if(!Array.isArray(json))r
     out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:String(it.ean||"").replace(/\D/g,"").slice(0,14),preco,de:de>preco?de:0,
       porBase:md&&md.q>0?CP.r2(preco/md.q):null,base:md?md.base:null,img:IMG_OK.test(img)?img:"",link:base+"/"+encodeURIComponent(String(p.linkText||""))+"/p",sim,em:Date.now(),frescor:"agora"});}catch(e){}});
   return out;};
+// Tenda Atacado: lê o JSON que a página de busca traz em <script id="__NEXT_DATA__"> (props.initialMobxState.productStore.products).
+// Se o formato mudou (sem o script, JSON quebrado ou sem a lista de produtos) falha com frase clara; lista vazia = nenhum produto (normal).
+BP.TENDA_MUDOU="o site do Tenda mudou: não consegui ler os preços";
+BP.lerTenda=function(html,rede,base,termo){
+  const t=String(html==null?"":html),a=t.search(/<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>/i);if(a<0)throw new Error(BP.TENDA_MUDOU);
+  const ini=t.indexOf(">",a)+1,fim=t.indexOf("</scr"+"ipt>",ini);if(fim<0)throw new Error(BP.TENDA_MUDOU);
+  let d;try{d=JSON.parse(t.slice(ini,fim));}catch(e){throw new Error(BP.TENDA_MUDOU);}
+  const ps=d&&d.props&&d.props.initialMobxState&&d.props.initialMobxState.productStore,lista=ps&&(Array.isArray(ps.products)?ps.products:null);
+  if(!lista)throw new Error(BP.TENDA_MUDOU);
+  const out=[];
+  lista.forEach(p=>{try{if(!p||typeof p!=="object")return;const preco=+p.price||0;if(!(preco>0)||p.isAvailable===false||(p.availability&&p.availability!=="in_stock"))return;
+    const nome=String(p.name||"").slice(0,120);if(!nome)return;const sim=CP.semelhanca(termo,nome);if(sim<.6)return;
+    const md=CP.medida(nome),img=String(p.thumbnail||""),lk=String(p.url||"");
+    const at=(Array.isArray(p.wholesalePrices)?p.wholesalePrices:[]).map(w=>({min:+(w&&w.minQuantity)||0,preco:+(w&&w.price)||0})).filter(w=>w.min>1&&w.preco>0&&w.preco<preco).sort((x,y)=>x.preco-y.preco)[0]||null;
+    out.push({fonte:"site",rede,nome,marca:String(p.brand||"").slice(0,40),ean:"",preco,de:0,atacado:at,
+      porBase:md&&md.q>0?CP.r2(preco/md.q):null,base:md?md.base:null,img:IMG_OK.test(img)?img:"",
+      link:/^https:\/\/(www\.)?tendaatacado\.com\.br\/produto\/[\w%.-]+$/i.test(lk)?lk:(p.token&&/^[\w%.-]+$/.test(String(p.token))?base+"/produto/"+p.token:base),sim,em:Date.now(),frescor:"agora"});}catch(e){}});
+  return out;};
 async function buscarSite(rede,termo,ttl){const base=sitesAtivos()[rede];if(!base)throw new Error(rede+": site sem consulta");const cache=lerCache(),k=rede+"|"+CP.norm(termo);
   if(cache[k]&&Date.now()-cache[k].em<(ttl||30*60000))return cache[k].lista;
   BP.consultasFeitas=(BP.consultasFeitas||0)+1;
+  if(rede==="Tenda"){const r=await CP.viaIntermediario(base+"/busca?q="+encodeURIComponent(termo));
+    const lista=BP.lerTenda(r.texto,rede,base,termo);cache[k]={em:Date.now(),lista};gravarCache(cache);return lista;}
   const u=base+"/api/catalog_system/pub/products/search?ft="+encodeURIComponent(termo)+"&_from=0&_to=19";
   const r=await CP.viaIntermediario(u);let j;try{j=JSON.parse(r.texto);}catch(e){throw new Error(rede+": resposta inesperada do site");}
   if(!Array.isArray(j))throw new Error(rede+": resposta inesperada do site");
@@ -7060,7 +7081,7 @@ BP.desenhar=function(el){const cfg=CP.config();try{BP.catalogoAgendar();}catch(e
   const lojas=st.pos?lojasPorRede():{},SA=sitesAtivos(),SL=sitesLink();
   const ofertaHtml=o=>`<div class="bp-oferta">${o.img?`<img src="${esc(o.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:`<div class="bp-sem-img" aria-hidden="true">${o.fonte==="site"?"🛒":"🧾"}</div>`}
     <div class="bp-info"><div>${(o.selo||[]).map(s=>`<span class="pill teal">${esc(s)}</span>`).join(" ")}</div><b>${esc(o.nome)}</b>
-      <div class="note" style="margin:0">${o.fonte==="site"?`🌐 site ${esc(o.rede)} · agora`:`🧾 sua nota · ${esc(o.loja||"")} · ${o.data?esc(o.data.split("-").reverse().join("/")):""}`}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja):""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
+      <div class="note" style="margin:0">${o.fonte==="site"?`🌐 site ${esc(o.rede)} · agora`:`🧾 sua nota · ${esc(o.loja||"")} · ${o.data?esc(o.data.split("-").reverse().join("/")):""}`}${o.loja&&o.fonte==="site"?" · loja: "+esc(o.loja):""}${o.atacado?` · atacado: ${F(o.atacado.preco)} cada a partir de ${CP.fmtNum(o.atacado.min,0)} un.`:""}${o.dist!=null?` · ${km(o.dist)}`:""}</div>
       <div class="note" style="margin:0">${o.porBase?`<b>${F(o.porBase)}/${esc(o.base)}</b>`:""}${o.desloc?(o.porBase?" · ":"")+"com deslocamento: <b>"+F(o.custo)+"</b>":""}${o.semDesloc?`<span style="color:#b45309">${o.desloc||o.porBase?" · ":""}${esc(BP.avisoSemDesloc(o.semDesloc))}</span>`:""}</div>
       <div class="row" style="margin-top:2px">${o.link?lk(o.link,"ver no site"):""}${o.lojaLat!=null?lk(mapaUrl(o.lojaLat,o.lojaLon),"mapa da loja"):""}</div></div>
     <div class="bp-preco">${o.de?`<s class="note" style="margin:0">${F(o.de)}</s>`:""}<b>${F(o.preco)}</b>${o.de?`<span class="pill rose">-${CP.fmtNum(Math.round((1-o.preco/o.de)*100),0)}%</span>`:""}</div></div>`;
