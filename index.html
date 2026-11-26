@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-10";
+const APP_VERSAO_TXT="2026.11.26-11";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -7094,13 +7094,15 @@ BP.agruparLinhas=function(lista,termo){const q=new Set(toks(termo)),G={};let tot
 const lev=(a,b)=>{const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i]);for(let j=1;j<=n;j++)d[0][j]=j;
   for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n];};
 // correção simples de digitação: troca a palavra que ninguém conhece pela mais parecida (≤2 letras de diferença) entre as palavras do que o site devolveu e do seu histórico
-BP.sugerir=function(termo,descartados){const voc=new Set();
+// marcas e produtos muito comuns: ajudam a corrigir digitação mesmo quando o site devolve outra coisa parecida (ex.: "sweeps" → Schweppes)
+const MARCAS="schweppes heineken budweiser brahma skol antarctica itaipava stella corona amstel petra bohemia original cocacola coca pepsi guarana fanta sprite sukita kuat gatorade redbull monster nescafe nestle danone italac piracanjuba parmalat camil tio joao prato fino sadia perdigao seara aurora friboi swift omo ariel brilhante veja ype limpol qboa comfort downy colgate oral sorriso rexona dove nivea lux protex seda pantene elseve tonico gin vodka whisky cachaca espumante refrigerante detergente amaciante sabao desinfetante macarrao feijao farinha chocolate bolacha biscoito margarina maionese ketchup mostarda".split(" ");
+BP.sugerir=function(termo,descartados){const voc=new Set();MARCAS.forEach(w=>voc.add(w));
   (descartados||[]).forEach(x=>toks(x).forEach(w=>voc.add(w)));
   try{CP.vivos("produtos").forEach(p=>toks(p.nome).forEach(w=>voc.add(w)));}catch(e){}
   const orig=String(termo).trim().split(/\s+/);let mudou=false;
-  const novo=orig.map(w=>{const n=CP.norm(w);if(n.length<5||voc.has(n))return w;let melhor=null,dm=3;
-    voc.forEach(v=>{if(v.length>=4&&v[0]===n[0]&&Math.abs(v.length-n.length)<=2){const d=lev(n,v);if(d<dm||(d===dm&&melhor&&v<melhor)){dm=d;melhor=v;}}});
-    if(melhor&&dm<=2){mudou=true;return melhor;}return w;});
+  const novo=orig.map(w=>{const n=CP.norm(w);if(n.length<5||voc.has(n))return w;let melhor=null,dm=99;
+    voc.forEach(v=>{if(v.length>=4&&v[0]===n[0]&&!v.includes(n)&&!n.includes(v)&&Math.abs(v.length-n.length)<=Math.max(2,Math.ceil(n.length*.5))){const d=lev(n,v);if(d>Math.max(2,Math.floor(Math.max(n.length,v.length)*.45)))return;if(d<dm||(d===dm&&melhor&&v<melhor)){dm=d;melhor=v;}}});
+    if(melhor){mudou=true;return melhor;}return w;});
   return mudou?novo.join(" "):"";};
 const latRede={};
 BP.limiteMercadoMs=10000;BP.hedgeMs=3500;
@@ -7113,6 +7115,9 @@ async function analisar(termo){const sites=sitesAtivos(),pool=Object.keys(sites)
   const resp=await Promise.all(pool.map(um));
   const lista=[].concat(...resp.filter(Array.isArray));
   if(!lista.length){const desc=[].concat(...pool.map(r=>(lerCache()[k(r)]||{}).desc||[]));const s=resp.some(Array.isArray)?BP.sugerir(termo,desc):"";return s?{sugestao:{de:termo,para:s}}:null;}
+  // digitou errado mas o site "adivinhou" outra coisa (ex.: "sweeps" traz Sweep): se alguma palavra não aparece em nenhum produto e há uma parecida, sugere (ex.: Schweppes)
+  {const todos=new Set();lista.forEach(o=>toks(o.nome+" "+(o.marca||"")).forEach(w=>todos.add(w)));
+   if(CP.norm(termo).split(" ").some(w=>w.length>=5&&!todos.has(w))){const s2=BP.sugerir(termo,lista.map(o=>o.nome+" "+(o.marca||"")));if(s2)return{sugestao:{de:termo,para:s2}};}}
   const g=BP.agruparLinhas(lista,termo);return g.ambiguo?{grupos:g.grupos,categorias:g.categorias||[]}:null;}
 let desId=0;
 BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(val("bpTermo"));return;}
@@ -7129,6 +7134,7 @@ BP.iniciarBusca=async function(){const p=BP.podeBuscar();if(!p.ok){BP.passoDig(v
 BP.escolherGrupo=function(i){const g=st.desamb&&st.desamb.grupos[i];if(!g)return;guardarDes(st.desamb.termo,g.termo,g.rot);st.refina={t:g.termo,rot:g.rot};st.escolha="refinada";desId++;return BP.buscar();};
 BP.escolherCategoria=function(i){const c=st.desamb&&st.desamb.categorias&&st.desamb.categorias[i];if(!c)return;guardarDes(st.desamb.termo,"","",c);st.refina=null;st.catFiltro={k:c.k,r:c.r};st.escolha="categoria";desId++;return BP.buscar();};
 BP.nenhumaDessas=function(){const t=st.desamb?st.desamb.termo:st.termo;guardarDes(t,"","");st.refina=null;st.escolha="exata";desId++;return BP.buscar();};
+BP.limparBusca=function(){buscaId++;desId++;Object.assign(st,{termo:"",qtd:1,res:null,desamb:null,sugestao:null,refina:null,catFiltro:null,escolha:"",emb:"",erro:"",desambBusy:false,modo:"produto",cesta:null,filtro:"geral"});BP.render();BP.foco("bpTermo");};
 BP.digitarDeNovo=function(){desId++;st.desamb=null;st.sugestao=null;st.desambBusy=false;BP.atualizarDes();BP.foco("bpTermo");};
 BP.aceitarSugestao=function(){const s=st.sugestao;if(!s)return;st.termo=s.para;const e=$("bpTermo");if(e)e.value=s.para;st.sugestao=null;return BP.iniciarBusca();};
 BP.buscarAssimMesmo=function(){st.sugestao=null;st.refina=null;st.escolha="";desId++;return BP.buscar();};
@@ -7138,7 +7144,7 @@ BP.podeBuscar=function(){const t=(val("bpTermo")||st.termo||"").trim();
   if(!st.pos&&!st.semDist)return{ok:false,motivo:"Falta o passo 1: diga onde você está ou escolha “buscar sem distância”."};
   if(!t)return{ok:false,motivo:"Escreva o que você quer comprar para liberar o botão Buscar."};
   return{ok:true,motivo:st.pos?"Tudo pronto: toque em Buscar.":"Vai buscar sem distância (o custo de ir até o mercado não entra nas contas)."};};
-BP.passoDig=function(v){st.termo=String(v==null?st.termo:v);if(st.desamb||st.sugestao){desId++;st.desamb=null;st.sugestao=null;BP.atualizarDes();}
+BP.passoDig=function(v){st.termo=String(v==null?st.termo:v);if(st.res&&st.modo==="produto"&&CP.norm(st.termo)!==CP.norm(st.res.termo||"")){buscaId++;st.res=null;st.catFiltro=null;st.refina=null;st.escolha="";const e3=$("bpPasso3");if(e3&&e3.parentNode)e3.parentNode.removeChild(e3);}if(st.desamb||st.sugestao){desId++;st.desamb=null;st.sugestao=null;BP.atualizarDes();}
   const p=BP.podeBuscar(),b=$("bpBuscar"),m=$("bpPorque");if(b)b.disabled=!p.ok;if(m)m.textContent=p.motivo;};
 BP.foco=function(id){try{setTimeout(()=>{const e=$(id);if(e&&e.focus)e.focus();},60);}catch(e){}};
 BP.semDistancia=function(v){st.semDist=v!==false;if(st.semDist){st.editEnd=false;}BP.render();if(st.semDist)BP.foco("bpTermo");};
@@ -7160,6 +7166,7 @@ BP.buscar=async function(){const termo=(($("bpTermo")||{}).value||st.termo).trim
     const dentro=redesNoRaio(todas,lojas,cfg.raioKm),fora=todas.filter(x=>!dentro.includes(x));
     let site=[];const cons={};dentro.forEach(r=>{if(porRede[r])site=site.concat(porRede[r]);if(consultas[r])cons[r]=consultas[r];});
     if(st.catFiltro&&st.catFiltro.k)site=site.filter(o=>{const sec=CP.secaoDe(o.nome);return CP.norm(o.cat||(sec!=="Outros"?sec:""))===st.catFiltro.k;});
+    if(st.catFiltro&&st.catFiltro.k){const pal=CP.norm(termo).split(/\s+/).filter(w=>w.length>=3&&!/\d/.test(w));if(pal.length)site=site.filter(o=>{const t=CP.norm(o.nome+" "+(o.marca||""));return pal.every(w=>t.includes(w));});}
     const hist=doHistorico(tb),of=site.concat(hist);of.forEach(o=>{delete o.selo;});BP.ranquear(of,st.qtd,lojas,cfg);
     const vs=Object.values(cons);
     Object.assign(st.res,{todas:of,ofertas:of,total:of.length,redes:dentro,n:vs.length,pend:vs.filter(c=>c.buscando).length,lento:vs.filter(c=>c.lento).length,mapaPend:!!(mapaP&&!mapaOk),
@@ -7477,7 +7484,7 @@ BP.atualizarDes=function(){try{const e=$("bpDesBox");if(e)e.innerHTML=desambHtml
 function passo2Html(){const cfg=CP.config(),ck=CP.custoKmUsado(),p=BP.podeBuscar();
   return`<div class="card bp-passo" id="bpPasso2"><h2 class="bp-h"><span class="bp-n">2 de 3</span>O que você quer comprar?</h2>
     <div class="bp-busca"><input id="bpTermo" value="${esc(st.termo)}" oninput="BP.passoDig(this.value)" placeholder="ex.: arroz 5kg" aria-label="produto" aria-describedby="bpPorque" enterkeyhint="search" onkeydown="if(event.key==='Enter')BP.iniciarBusca()">
-      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button id="bpBuscar" class="btn primary" ${p.ok&&!st.desambBusy?"":"disabled"} onclick="BP.iniciarBusca()">🔎 Buscar</button></div>
+      <input id="bpQtd" type="text" inputmode="numeric" value="${esc(st.qtd)}" title="quantidade" aria-label="quantidade" style="width:64px"><button id="bpBuscar" class="btn primary" ${p.ok&&!st.desambBusy?"":"disabled"} onclick="BP.iniciarBusca()">🔎 Buscar</button><button class="btn" aria-label="Limpar a busca" onclick="BP.limparBusca()">🧹 Limpar</button></div>
     <p class="note" id="bpPorque" role="status" aria-live="polite" style="margin:6px 0 0">${esc(p.motivo)}</p>
     <div id="bpDesBox">${desambHtml()}</div>
     <p class="note" style="margin:6px 0 0">Busca por texto livre, de um produto só (não usa a sua lista): escreva produto, marca e, se quiser, o tamanho (ex.: “cerveja Heineken 350 ml”, “arroz 5 kg”). Os resultados mostram os tamanhos achados (269 ml, 350 ml, 1 L…): toque num deles para comparar só aquela embalagem entre os mercados.</p>
