@@ -4039,7 +4039,7 @@ const FB_DOC="casas/principal";
 // Versão do app/formato. Vai no documento da nuvem e as REGRAS do Firestore exigem v >= esta versão
 // para gravar: apps antigos (ainda abertos em algum aparelho) não conseguem mais sobrescrever os
 // dados. Se a nuvem tiver uma versão MAIOR que a deste app, ele para de gravar e pede para recarregar.
-const APP_VERSAO_TXT="2026.11.26-6";
+const APP_VERSAO_TXT="2026.11.26-7";
 // número inteiro da versão, tirado do texto: "2026.10.02-9" → 2026100209 (sobe a cada publicação)
 const APP_VERSAO=(t=>{const m=t.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d+)$/);return m?+(m[1]+m[2]+m[3]+m[4].padStart(2,"0")):0;})(APP_VERSAO_TXT);
 marcarVersaoLocal();
@@ -4489,7 +4489,8 @@ body.modo-cp #folhaLanc,body.modo-hub #folhaLanc{display:none!important;}
 .cp-ao-vivo.off{color:var(--mut)!important;font-weight:600;}
 body.modo-cp{overflow:visible!important;} /* o estilo.css deixa o body com overflow-x:hidden, o que mata o "sticky" do topo, do Finalizar e dos avisos */
 #cpApp button,#cpApp .cp-check,#hub button,#cpApp select{touch-action:manipulation;}
-#cpApp select{height:44px;} #cpApp .btn.cp-mini{min-height:44px!important;}
+#cpApp select{height:44px;} #cpApp .btn.cp-mini,#cpApp .btn[aria-label],#cpApp button.btn{min-width:44px;}
+#cpApp .btn.cp-mini{min-height:44px!important;}
 .hub-card .hub-info b{display:inline;font-size:inherit;white-space:nowrap;} .hub-topo .icone-btn{margin-left:auto;}
 /* contraste do verde (branco sobre #0d9488 dá 3,75:1; no escuro, 1,86:1) — só dentro da tela inicial, da Lista e da Busca */
 #hub .btn.primary,#cpApp .btn.primary,#cpApp .subabas button.on,#hub .hub-cont .hub-ico{background:#0f766e;border-color:#0f766e;color:#fff;}
@@ -4730,7 +4731,7 @@ function limparConfigNovo(t,x){const o={id:x.id,_em:x._em};if(x._por!=null)o._po
     if(x.uso&&typeof x.uso==="object"&&!Array.isArray(x.uso)){o.uso=CP.limparDiasUso(x.uso);if(x.tam)o.tam=CP.limparTamUso(x.tam);if(isFinite(+x.usoEm)&&+x.usoEm>0)o.usoEm=Math.min(+x.usoEm,ANO_2100);}}
   return o;}
 const DIA_RX=/^\d{4}-\d{2}-\d{2}$/,NOME_DOC=/^[a-z0-9-]{1,30}$/,DIAS_USO=35;
-const n0=v=>{v=Math.floor(+v);return isFinite(v)&&v>0?Math.min(v,1e9):0;};
+const n0=v=>{v=Math.floor(+v);return isFinite(v)&&v>0?Math.min(v,1e7):0;};
 // consumo dos serviços grátis (contador em 46): formato de um dia: {w,l,e} (w = pedidos ao intermediário, l = leituras, e = gravações do Firestore)
 function limparDias(d){const o={};if(!d||typeof d!=="object"||Array.isArray(d))return o;
   Object.keys(d).filter(k=>DIA_RX.test(k)&&d[k]&&typeof d[k]==="object").sort().slice(-DIAS_USO).forEach(k=>{o[k]={w:n0(d[k].w),l:n0(d[k].l),e:n0(d[k].e)};});return o;}
@@ -4752,7 +4753,9 @@ function limparCartoes(l){if(!Array.isArray(l))return[];const vistos=new Set(),o
     out.push(o);});
   return out;}
 // um registro com tipo errado (versão antiga com bug, backup estranho) não pode travar as telas em todos os aparelhos
-function limpar(c,r){const x=Object.assign({},r);
+const MAX_REG=200000; // um registro maior que isto (nuvem/backup malicioso ou com defeito) é descartado: junto, 1 MB de documento e a memória do aparelho ficam protegidos
+function limpar(c,r){let tam=0;try{tam=JSON.stringify(r).length;}catch(e){tam=MAX_REG+1;}if(tam>MAX_REG)throw new Error("registro grande demais");
+  const x=Object.assign({},r);
   x._em=Math.min(Math.max(+x._em||0,0),ANO_2100);if(x._por!=null)TXT(x,"_por");
   if(x._del)return x;
   if(c==="compras"){LISTA(x,"itens");x.itens=x.itens.filter(i=>i&&typeof i==="object"&&!Array.isArray(i));["data","pagamento","mercadoId","chave","listaId","cartaoId"].forEach(k=>TXT(x,k));
@@ -4841,7 +4844,7 @@ CP.salvarReg=function(col,r){if(!r.id)r.id=novoId();carimbar(r);CP.dados()[col][
 // (a compra apagada guarda a data: o marcador fica no MESMO documento do ano dela na nuvem)
 const marcadorDe=r=>{const m={id:r.id,_del:true,_em:r._em};if(r.data)m.data=r.data;return m;};
 CP.apagar=function(col,id){const d=CP.dados();if(typeof id!=="string"||!TEM(d[col],id))return;const r=d[col][id];if(!r)return;d[col][id]=carimbar(marcadorDe(Object.assign({},r,{id})));};
-// marcadores de exclusão com mais de 180 dias saem (todos os aparelhos já viram)
+// (na prática os marcadores de exclusão NÃO saem: só a limpeza da memória roda; são pequenos e garantem que o apagado não volte)
 CP.limparMarcadores=function(){const d=CP.dados(),lim=Date.now()-180*86400000;
   COLECOES.forEach(c=>{for(const[k,r]of Object.entries(d[c]))if(r._del&&(+r._em||0)<lim)delete d[c][k];});};
 
@@ -5006,7 +5009,7 @@ CP.nomeMercado=id=>{const m=CP.por("mercados",id);return m?(m.apelido||m.nome):"
 // ---------- listas e itens ----------
 CP.listasAbertas=()=>CP.vivos("listas").filter(l=>l.status!=="fechada").sort((a,b)=>String(b.criada).localeCompare(String(a.criada)));
 CP.itensDa=lid=>CP.vivos("itens").filter(i=>i.listaId===lid).sort((a,b)=>(CP.SECOES.indexOf(a.secao)-CP.SECOES.indexOf(b.secao))||String(a.nome).localeCompare(String(b.nome),"pt-BR"));
-CP.novaLista=function(nome){return CP.salvarReg("listas",{nome:String(nome||("Compras "+hoje().split("-").reverse().join("/"))).slice(0,60),criada:hoje(),status:"aberta"});};
+CP.novaLista=function(nome,idFixo){return CP.salvarReg("listas",{id:typeof idFixo==="string"&&ID_OK.test(idFixo)?idFixo:undefined,nome:String(nome||("Compras "+hoje().split("-").reverse().join("/"))).slice(0,60),criada:hoje(),status:"aberta"});};
 CP.addItem=function(lid,nome,qtd,un,mercadoId,copiaDe){nome=String(nome||"").trim().slice(0,80);if(!nome)return null;
   const p=CP.garantirProduto(nome),m=typeof mercadoId==="string"&&ID_OK.test(mercadoId)?mercadoId:"";
   const ja=CP.itensDa(lid).find(i=>i.produtoId===p.id&&i.estado!=="pego"&&(i.mercadoId||"")===m);
@@ -5392,7 +5395,7 @@ function planoArquivo(diasMin){const h=hoje(),out=[];let itens=0,antes=0,depois=
 // só conta (sem mexer em nada): quantas listas e itens seriam arquivados
 CP.previaArquivar=function(diasMin){const p=planoArquivo(+diasMin||60);return{listas:p.listas,itens:p.itens,liberado:p.liberado,liberadoDepois:p.liberadoDepois};};
 // arquiva as listas fechadas há MAIS de diasMin dias. "liberado" = espaço que sai já (estimado); "liberadoDepois" = o que ainda ocupam os marcadores
-// de apagado (saem sozinhos depois de 180 dias, quando todos os aparelhos já viram)
+// de apagado (ficam guardados: são pequenos e impedem que o apagado volte)
 CP.arquivarListas=function(diasMin){const p=planoArquivo(+diasMin||60);
   p.plano.forEach(x=>{x.itens.forEach(i=>CP.apagar("itens",i.id));x.lista.arquivada=hoje();CP.salvarReg("listas",x.lista);});
   if(p.listas)CP.gravar();
@@ -5864,7 +5867,7 @@ CP.salvarCompra=function(rc){const a=CP.analisar(rc);
     else{it.estado="faltou";proxima.push(it);}
     CP.salvarReg("itens",it);});
   // o que faltou vai para a próxima lista aberta (ou uma nova)
-  if(proxima.length||extrasProxima.length){let l2=CP.listasAbertas().find(l=>l.id!==rc.listaId);if(!l2)l2=CP.novaLista("Faltou da última compra");
+  if(proxima.length||extrasProxima.length){let l2=CP.listasAbertas().find(l=>l.id!==rc.listaId);if(!l2){const fixo=rc.listaId?("prox-"+rc.listaId).slice(0,48):undefined;l2=(fixo&&CP.por("listas",fixo))||CP.novaLista("Faltou da última compra",fixo);} // id fixo: dois aparelhos que finalizam a mesma compra sem sinal chegam à MESMA lista
     proxima.forEach(it=>CP.addItem(l2.id,it.nome,it.qtd,it.un,it.mercadoId,it.id));extrasProxima.forEach(x=>CP.addItem(l2.id,x.nome,x.qtd,x.un));}
   if(rc.listaId){const l=CP.por("listas",rc.listaId);if(l&&!CP.itensDa(l.id).some(i=>i.estado==="pendente")){l.status="fechada";l.fechada=CP.hoje();CP.salvarReg("listas",l);}}
   CP.precisaAnos=true;CP.gravar();
@@ -6624,7 +6627,7 @@ CP.subirBackup=function(inp,subst){const f=inp.files&&inp.files[0];if(!f)return;
     const res=CP.importar(r.result,subst);CP.precisaAnos=true;CP.gravar();
     alert("✔ Importado."+(subst?" "+(res.apagados?CP.fmtNum(res.apagados,0)+" registro(s) que não estavam no arquivo foram apagados.":"Nada precisou ser apagado.")+(CP.syncAtivo()&&CP.sync.status!=="ok"?" Sem sinal agora: o que outro aparelho criou e este ainda não recebeu pode voltar.":""):""));
     CP.render();}catch(e){alert(e.message);}};r.readAsText(f);};
-CP.restaurarAuto=function(dia){const b=CP.backups().find(x=>x.dia===dia);if(!b||!confirm("Juntar com a cópia de "+dataBR(dia)+"? (nada é apagado)"))return;
+CP.restaurarAuto=function(dia){const b=CP.backups().find(x=>x.dia===dia);if(!b||!confirm("Juntar com a cópia de "+dataBR(dia)+"? Juntar só ACRESCENTA o que falta: o que você apagou depois continua apagado. Para voltar exatamente ao estado da cópia, use \"Importar substituindo\"."))return;
   try{CP.importar(JSON.stringify({tipo:"compras-familia",dados:JSON.parse(b.dados)}),false);CP.precisaAnos=true;CP.gravar();CP.render();}catch(e){alert(e.message);}};
 
 function posDesenho(){
